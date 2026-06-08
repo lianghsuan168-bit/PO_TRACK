@@ -93,6 +93,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Helvetica Neue',Ar
 .sample-btn:hover{background:#E6F1FB;}
  
 .done-card{border-left:3px solid #1D9E75;}
+.urgent-card{border-left:4px solid #D85A30;background:#FFF7F4;}
+.chip-urgent{background:#FCEBEB;color:#C62828;font-weight:600;}
+.bu{background:#FCEBEB;color:#A32D2D;}
  
 @media(max-width:600px){
   .upload-area{grid-template-columns:1fr;}
@@ -131,14 +134,20 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Helvetica Neue',Ar
   </div>
  
   <div class="tabs">
-    <button class="tab-btn active" onclick="switchTab('main-pending',this)">總表未完成 <span class="badge bp" id="badge-main-p">0</span></button>
+    <button class="tab-btn active" onclick="switchTab('urgent',this)">🚨 急件 <span class="badge bu" id="badge-urgent">0</span></button>
+    <button class="tab-btn" onclick="switchTab('main-pending',this)">總表未完成 <span class="badge bp" id="badge-main-p">0</span></button>
     <button class="tab-btn" onclick="switchTab('main-done',this)">總表已完成 <span class="badge bd" id="badge-main-d">0</span></button>
     <button class="tab-btn" onclick="switchTab('wh-pending',this)">倉庫未完成 <span class="badge bp" id="badge-wh-p">0</span></button>
     <button class="tab-btn" onclick="switchTab('wh-done',this)">倉庫已完成 <span class="badge bd" id="badge-wh-d">0</span></button>
     <button class="tab-btn" onclick="switchTab('missing-po',this)">未收到 PO <span class="badge bp" id="badge-missing-po">0</span></button>
   </div>
  
-  <div id="tab-main-pending">
+  <div id="tab-urgent">
+    <div class="po-list" id="list-urgent">
+      <div class="empty-state"><i class="ti ti-alert-triangle" aria-hidden="true"></i>尚無急件</div>
+    </div>
+  </div>
+  <div id="tab-main-pending" style="display:none;">
     <div class="po-list" id="list-main-pending">
       <div class="empty-state">
         <i class="ti ti-inbox" aria-hidden="true"></i>
@@ -259,8 +268,9 @@ function parseMaster(rows) {
     const remark    = String(r[idx('備註')] || '').trim();
     const isDelivered = statusLower === 'v';
     const isReturn    = delivered.includes('退');
+    const isUrgent    = delivered.includes('急') || statusLower.includes('urgent');
     const displayStatus = isDelivered ? '✓ 已交' : isReturn ? delivered : (delivered || '未交');
-    data.push({po, name, spec, unit, qty, unitPrice, total, project, usage, supplier, remark, delivered, displayStatus, isDelivered, isReturn});
+    data.push({po, name, spec, unit, qty, unitPrice, total, project, usage, supplier, remark, delivered, displayStatus, isDelivered, isReturn, isUrgent});
   }
   return data;
 }
@@ -326,8 +336,9 @@ function buildOrders(data, sourceLabel) {
     const totalCount     = items.length;
     const pct            = totalCount > 0 ? Math.round((deliveredCount / totalCount) * 100) : 0;
     const isDone         = pendingCount === 0 && returnCount === 0;
+    const urgentCount    = items.filter(i => i.isUrgent).length;
     const latestStatuses = [...new Set(pendingItems.map(i => i.displayStatus || i.delivered || '未交'))];
-    return {...o, total, deliveredTotal, deliveredCount, returnCount, pendingCount, totalCount, pct, isDone, latestStatuses};
+    return {...o, total, deliveredTotal, deliveredCount, returnCount, pendingCount, totalCount, pct, isDone, latestStatuses, urgentCount, isUrgent: urgentCount > 0};
   });
 }
 
@@ -344,7 +355,13 @@ function processDataBySource() {
   const mainOrdersAll      = buildOrders(masterMainData, '總表');
   const warehouseOrdersAll = buildOrders(warehouseData, '倉庫');
 
-  const missingPOOrders = [...mainOrdersAll, ...warehouseOrdersAll]
+  const allSourceOrders = [...mainOrdersAll, ...warehouseOrdersAll];
+
+  const urgentOrders = allSourceOrders
+    .filter(o => o.isUrgent)
+    .sort((a, b) => a.source.localeCompare(b.source) || a.po.localeCompare(b.po));
+
+  const missingPOOrders = allSourceOrders
     .filter(o => isMissingPOOrder(o, receivedPOSet))
     .sort((a, b) => a.source.localeCompare(b.source) || a.po.localeCompare(b.po));
 
@@ -364,6 +381,7 @@ function processDataBySource() {
   document.getElementById('m-done').textContent    = mainDone.length + whDone.length + missingPOOrders.filter(o => o.isDone).length;
   document.getElementById('m-amount').textContent  = 'NT$' + grandTotal.toLocaleString();
 
+  document.getElementById('badge-urgent').textContent   = urgentOrders.length;
   document.getElementById('badge-main-p').textContent   = mainPending.length;
   document.getElementById('badge-main-d').textContent   = mainDone.length;
   document.getElementById('badge-wh-p').textContent     = whPending.length;
@@ -371,6 +389,7 @@ function processDataBySource() {
   document.getElementById('badge-missing-po').textContent = missingPOOrders.length;
   document.getElementById('summary-bar').style.display = 'grid';
 
+  renderUrgent(urgentOrders, 'list-urgent', 'ug');
   renderPending(mainPending, 'list-main-pending', 'mp');
   renderDone(mainDone, 'list-main-done', 'md');
   renderPending(whPending, 'list-wh-pending', 'wp');
@@ -382,6 +401,24 @@ function processData(master, po) {
   masterMainData = master || [];
   warehouseData = [];
   processDataBySource();
+}
+
+
+function itemSortRank(item) {
+  if(item.isUrgent) return 0;
+  if(!item.isDelivered && !item.isReturn) return 1;
+  if(item.isReturn) return 2;
+  if(item.isDelivered) return 3;
+  return 4;
+}
+
+function sortedItems(items) {
+  return [...(items || [])].sort((a, b) => {
+    const ra = itemSortRank(a);
+    const rb = itemSortRank(b);
+    if(ra !== rb) return ra - rb;
+    return String(a.name || '').localeCompare(String(b.name || ''), 'zh-Hant');
+  });
 }
 
 function fillClass(p) {
@@ -398,7 +435,9 @@ function renderPending(list, targetId, prefix) {
     const remaining  = 100 - o.pct;
     const pendingAmt = o.total - o.deliveredTotal;
     const statusText = o.latestStatuses && o.latestStatuses.length ? o.latestStatuses.join('、') : '未交';
-    return `<div class="po-card">
+    const cardClass = o.isUrgent ? 'po-card urgent-card' : 'po-card';
+    const topChipClass = o.isUrgent ? 'chip chip-urgent' : 'chip chip-partial';
+    return `<div class="${cardClass}">
       <div class="po-header" onclick="toggle('${prefix}d${idx}','${prefix}ch${idx}')">
         <div class="po-title">
           <div class="po-no">${o.po}</div>
@@ -408,7 +447,7 @@ function renderPending(list, targetId, prefix) {
           <div class="po-amount">NT$${o.total.toLocaleString()}</div>
           <div class="po-amount-sub">${statusText} ・ NT$${pendingAmt.toLocaleString()}</div>
         </div>
-        <span class="chip chip-partial">${statusText}</span>
+        <span class="${topChipClass}">${o.isUrgent ? '🚨 ' : ''}${statusText}</span>
         <i class="ti ti-chevron-down chevron" id="${prefix}ch${idx}" aria-hidden="true"></i>
       </div>
       <div class="prog-area">
@@ -432,7 +471,7 @@ function renderPending(list, targetId, prefix) {
               <th style="text-align:center;">狀態</th>
             </tr></thead>
             <tbody>
-              ${o.items.map(item => {
+              ${sortedItems(o.items).map(item => {
                 const chipClass = item.isDelivered ? 'chip-done' : item.isReturn ? 'chip-return' : 'chip-pending';
                 const chipLabel = item.displayStatus || (item.isDelivered ? '✓ 已交' : item.isReturn ? '退貨' : '未交');
                 const amtCls    = !item.isDelivered && !item.isReturn ? 'c-red' : '';
@@ -454,6 +493,64 @@ function renderPending(list, targetId, prefix) {
             <div class="sr-item"><span class="sr-label">待交金額</span><span class="sr-value" style="color:#D85A30;">NT$${(o.total - o.deliveredTotal).toLocaleString()}</span></div>
             ${o.returnCount > 0 ? `<div class="sr-item"><span class="sr-label">退貨筆數</span><span class="sr-value" style="color:#A32D2D;">${o.returnCount} 項</span></div>` : ''}
           </div>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function renderUrgent(list, targetId, prefix) {
+  const el = document.getElementById(targetId);
+  if(!list.length) {
+    el.innerHTML = '<div class="empty-state"><i class="ti ti-alert-triangle" aria-hidden="true"></i>尚無急件</div>';
+    return;
+  }
+  el.innerHTML = list.map((o, idx) => {
+    const pendingAmt = o.total - o.deliveredTotal;
+    const statusText = o.latestStatuses && o.latestStatuses.length ? o.latestStatuses.join('、') : '急件';
+    return `<div class="po-card urgent-card">
+      <div class="po-header" onclick="toggle('${prefix}d${idx}','${prefix}ch${idx}')">
+        <div class="po-title">
+          <div class="po-no">🚨 ${o.po}</div>
+          <div class="po-sub">${o.source || ''}${o.source ? ' ・ ' : ''}${o.project || ''}${o.project && o.supplier ? ' ・ ' : ''}${o.supplier || ''}</div>
+        </div>
+        <div class="po-right">
+          <div class="po-amount">NT$${o.total.toLocaleString()}</div>
+          <div class="po-amount-sub">${statusText} ・ 待交 NT$${pendingAmt.toLocaleString()}</div>
+        </div>
+        <span class="chip chip-urgent">🚨 ${statusText}</span>
+        <i class="ti ti-chevron-down chevron" id="${prefix}ch${idx}" aria-hidden="true"></i>
+      </div>
+      <div class="detail" id="${prefix}d${idx}">
+        <div class="detail-inner">
+          <div class="dtitle">急件品項</div>
+          <table class="dtbl">
+            <colgroup>
+              <col style="width:26%"><col style="width:20%"><col style="width:8%">
+              <col style="width:7%"><col style="width:11%"><col style="width:13%"><col style="width:15%">
+            </colgroup>
+            <thead><tr>
+              <th>品名</th><th>規格</th><th class="num">數量</th>
+              <th class="num">單位</th><th class="num">單價</th><th class="num">金額</th>
+              <th style="text-align:center;">狀態</th>
+            </tr></thead>
+            <tbody>
+              ${sortedItems(o.items).map(item => {
+                const chipClass = item.isUrgent ? 'chip-urgent' : item.isDelivered ? 'chip-done' : item.isReturn ? 'chip-return' : 'chip-pending';
+                const chipLabel = item.displayStatus || (item.isDelivered ? '✓ 已交' : item.isReturn ? '退貨' : '未交');
+                const amtCls    = !item.isDelivered && !item.isReturn ? 'c-red' : '';
+                return `<tr>
+                  <td>${item.name}</td>
+                  <td class="c-muted" style="font-size:11px;">${item.spec}</td>
+                  <td class="num">${item.qty}</td>
+                  <td class="num c-muted">${item.unit}</td>
+                  <td class="num">${item.unitPrice > 0 ? item.unitPrice.toLocaleString() : '—'}</td>
+                  <td class="num ${amtCls}">${item.total > 0 ? 'NT$' + item.total.toLocaleString() : '—'}</td>
+                  <td style="text-align:center;"><span class="chip ${chipClass}">${chipLabel}</span></td>
+                </tr>`;
+              }).join('')}
+            </tbody>
+          </table>
         </div>
       </div>
     </div>`;
@@ -494,7 +591,7 @@ function renderDone(list, targetId, prefix) {
               <th style="text-align:center;">狀態</th>
             </tr></thead>
             <tbody>
-              ${o.items.map(item => `<tr>
+              ${sortedItems(o.items).map(item => `<tr>
                 <td>${item.name}</td>
                 <td class="c-muted" style="font-size:11px;">${item.spec}</td>
                 <td class="num">${item.qty}</td>
@@ -524,7 +621,9 @@ function renderMissingPO(list, targetId, prefix) {
   }
   el.innerHTML = list.map((o, idx) => {
     const statusText = o.latestStatuses && o.latestStatuses.length ? o.latestStatuses.join('、') : (o.isDone ? '已完成' : '未交');
-    return `<div class="po-card">
+    const cardClass = o.isUrgent ? 'po-card urgent-card' : 'po-card';
+    const topChipClass = o.isUrgent ? 'chip chip-urgent' : 'chip chip-partial';
+    return `<div class="${cardClass}">
       <div class="po-header" onclick="toggle('${prefix}d${idx}','${prefix}ch${idx}')">
         <div class="po-title">
           <div class="po-no">${o.po}</div>
@@ -551,7 +650,7 @@ function renderMissingPO(list, targetId, prefix) {
               <th style="text-align:center;">狀態</th>
             </tr></thead>
             <tbody>
-              ${o.items.map(item => {
+              ${sortedItems(o.items).map(item => {
                 const chipClass = item.isDelivered ? 'chip-done' : item.isReturn ? 'chip-return' : 'chip-pending';
                 const chipLabel = item.displayStatus || (item.isDelivered ? '✓ 已交' : item.isReturn ? '退貨' : '未交');
                 const amtCls    = !item.isDelivered && !item.isReturn ? 'c-red' : '';
@@ -581,7 +680,7 @@ function toggle(detailId, chevronId) {
 function switchTab(tab, btn) {
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
-  ['main-pending','main-done','wh-pending','wh-done','missing-po'].forEach(id => {
+  ['urgent','main-pending','main-done','wh-pending','wh-done','missing-po'].forEach(id => {
     document.getElementById('tab-' + id).style.display = tab === id ? 'block' : 'none';
   });
 }
