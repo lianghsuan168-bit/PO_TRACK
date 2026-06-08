@@ -131,12 +131,14 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Helvetica Neue',Ar
   </div>
  
   <div class="tabs">
-    <button class="tab-btn active" onclick="switchTab('pending',this)">未完成 <span class="badge bp" id="badge-p">0</span></button>
-    <button class="tab-btn" onclick="switchTab('done',this)">已完成 <span class="badge bd" id="badge-d">0</span></button>
+    <button class="tab-btn active" onclick="switchTab('main-pending',this)">總表未完成 <span class="badge bp" id="badge-main-p">0</span></button>
+    <button class="tab-btn" onclick="switchTab('main-done',this)">總表已完成 <span class="badge bd" id="badge-main-d">0</span></button>
+    <button class="tab-btn" onclick="switchTab('wh-pending',this)">倉庫未完成 <span class="badge bp" id="badge-wh-p">0</span></button>
+    <button class="tab-btn" onclick="switchTab('wh-done',this)">倉庫已完成 <span class="badge bd" id="badge-wh-d">0</span></button>
   </div>
  
-  <div id="tab-pending">
-    <div class="po-list" id="list-pending">
+  <div id="tab-main-pending">
+    <div class="po-list" id="list-main-pending">
       <div class="empty-state">
         <i class="ti ti-inbox" aria-hidden="true"></i>
         請上傳訂單總表，或先載入範例資料查看效果<br>
@@ -144,9 +146,19 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Helvetica Neue',Ar
       </div>
     </div>
   </div>
-  <div id="tab-done" style="display:none;">
-    <div class="po-list" id="list-done">
-      <div class="empty-state"><i class="ti ti-check-square" aria-hidden="true"></i>尚無已完成訂單</div>
+  <div id="tab-main-done" style="display:none;">
+    <div class="po-list" id="list-main-done">
+      <div class="empty-state"><i class="ti ti-check-square" aria-hidden="true"></i>尚無總表已完成訂單</div>
+    </div>
+  </div>
+  <div id="tab-wh-pending" style="display:none;">
+    <div class="po-list" id="list-wh-pending">
+      <div class="empty-state"><i class="ti ti-building-warehouse" aria-hidden="true"></i>尚無倉庫未完成訂單</div>
+    </div>
+  </div>
+  <div id="tab-wh-done" style="display:none;">
+    <div class="po-list" id="list-wh-done">
+      <div class="empty-state"><i class="ti ti-check-square" aria-hidden="true"></i>尚無倉庫已完成訂單</div>
     </div>
   </div>
 </div>
@@ -155,9 +167,14 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Helvetica Neue',Ar
 <script>
 let masterMainData = [];
 let warehouseData = [];
+let poData = null;
+let allOrders = [];
 
 function handleMaster(input) {
   const f = input.files[0]; if(!f) return;
+  document.getElementById('fname-master').textContent = f.name;
+  document.getElementById('status-master').classList.add('show');
+  document.getElementById('box-master').classList.add('loaded');
 
   const r = new FileReader();
   r.onload = e => {
@@ -258,30 +275,20 @@ function parsePO(rows) {
 }
  
 function tryProcess() {
-  if(masterData) processData(masterData, poData);
+  if(masterMainData.length || warehouseData.length) processDataBySource();
 }
 
-function processDataBySource() {
-  const mainOrders = buildOrders(masterMainData);
-  const warehouseOrders = buildOrders(warehouseData);
-
-  renderPending(mainOrders.filter(o => !o.isDone), 'list-main-pending');
-  renderDone(mainOrders.filter(o => o.isDone), 'list-main-done');
-
-  renderPending(warehouseOrders.filter(o => !o.isDone), 'list-wh-pending');
-  renderDone(warehouseOrders.filter(o => o.isDone), 'list-wh-done');
-}
-function processData(master, po) {
+function buildOrders(data) {
   const orders = {};
-  master.forEach(row => {
+  data.forEach(row => {
     const key = row.po || '(無PO)';
     if(!orders[key]) {
       orders[key] = {po: key, project: row.project, supplier: row.supplier, items: []};
     }
     orders[key].items.push(row);
   });
- 
-  allOrders = Object.values(orders).map(o => {
+
+  return Object.values(orders).map(o => {
     const items          = o.items;
     const total          = items.reduce((s, i) => s + (i.total || 0), 0);
     const deliveredTotal = items.filter(i => i.isDelivered).reduce((s, i) => s + (i.total || 0), 0);
@@ -293,29 +300,49 @@ function processData(master, po) {
     const isDone         = pendingCount === 0 && returnCount === 0;
     return {...o, total, deliveredTotal, deliveredCount, returnCount, pendingCount, totalCount, pct, isDone};
   });
- 
-  const pending    = allOrders.filter(o => !o.isDone).sort((a, b) => a.pct - b.pct);
-  const done       = allOrders.filter(o => o.isDone).sort((a, b) => a.po.localeCompare(b.po));
-  const grandTotal = allOrders.reduce((s, o) => s + o.total, 0);
- 
-  document.getElementById('m-total').textContent  = allOrders.length;
-  document.getElementById('m-pending').textContent = pending.length;
-  document.getElementById('m-done').textContent    = done.length;
-  document.getElementById('m-amount').textContent  = 'NT$' + grandTotal.toLocaleString();
-  document.getElementById('badge-p').textContent   = pending.length;
-  document.getElementById('badge-d').textContent   = done.length;
-  document.getElementById('summary-bar').style.display = 'grid';
- 
-  renderPending(pending);
-  renderDone(done);
 }
- 
+
+function processDataBySource() {
+  const mainOrders      = buildOrders(masterMainData);
+  const warehouseOrders = buildOrders(warehouseData);
+
+  const mainPending = mainOrders.filter(o => !o.isDone).sort((a, b) => a.pct - b.pct);
+  const mainDone    = mainOrders.filter(o => o.isDone).sort((a, b) => a.po.localeCompare(b.po));
+  const whPending   = warehouseOrders.filter(o => !o.isDone).sort((a, b) => a.pct - b.pct);
+  const whDone      = warehouseOrders.filter(o => o.isDone).sort((a, b) => a.po.localeCompare(b.po));
+
+  allOrders = [...mainOrders, ...warehouseOrders];
+  const grandTotal = allOrders.reduce((s, o) => s + o.total, 0);
+
+  document.getElementById('m-total').textContent   = allOrders.length;
+  document.getElementById('m-pending').textContent = mainPending.length + whPending.length;
+  document.getElementById('m-done').textContent    = mainDone.length + whDone.length;
+  document.getElementById('m-amount').textContent  = 'NT$' + grandTotal.toLocaleString();
+
+  document.getElementById('badge-main-p').textContent = mainPending.length;
+  document.getElementById('badge-main-d').textContent = mainDone.length;
+  document.getElementById('badge-wh-p').textContent   = whPending.length;
+  document.getElementById('badge-wh-d').textContent   = whDone.length;
+  document.getElementById('summary-bar').style.display = 'grid';
+
+  renderPending(mainPending, 'list-main-pending', 'mp');
+  renderDone(mainDone, 'list-main-done', 'md');
+  renderPending(whPending, 'list-wh-pending', 'wp');
+  renderDone(whDone, 'list-wh-done', 'wd');
+}
+
+function processData(master, po) {
+  masterMainData = master || [];
+  warehouseData = [];
+  processDataBySource();
+}
+
 function fillClass(p) {
   return p < 30 ? 'fill-low' : p < 70 ? 'fill-mid' : p < 100 ? 'fill-high' : 'fill-done';
 }
  
-function renderPending(list) {
-  const el = document.getElementById('list-pending');
+function renderPending(list, targetId, prefix) {
+  const el = document.getElementById(targetId);
   if(!list.length) {
     el.innerHTML = '<div class="empty-state"><i class="ti ti-circle-check" aria-hidden="true"></i>所有訂單已完成交貨！</div>';
     return;
@@ -324,7 +351,7 @@ function renderPending(list) {
     const remaining  = 100 - o.pct;
     const pendingAmt = o.total - o.deliveredTotal;
     return `<div class="po-card">
-      <div class="po-header" onclick="toggle('pd${idx}','ch${idx}')">
+      <div class="po-header" onclick="toggle('${prefix}d${idx}','${prefix}ch${idx}')">
         <div class="po-title">
           <div class="po-no">${o.po}</div>
           <div class="po-sub">${o.project || ''}${o.project && o.supplier ? ' ・ ' : ''}${o.supplier || ''}</div>
@@ -334,7 +361,7 @@ function renderPending(list) {
           <div class="po-amount-sub">未交 NT$${pendingAmt.toLocaleString()}</div>
         </div>
         <span class="chip chip-partial">未交 ${remaining}%</span>
-        <i class="ti ti-chevron-down chevron" id="ch${idx}" aria-hidden="true"></i>
+        <i class="ti ti-chevron-down chevron" id="${prefix}ch${idx}" aria-hidden="true"></i>
       </div>
       <div class="prog-area">
         <div class="prog-labels">
@@ -343,7 +370,7 @@ function renderPending(list) {
         </div>
         <div class="prog-track"><div class="prog-fill ${fillClass(o.pct)}" style="width:${o.pct}%"></div></div>
       </div>
-      <div class="detail" id="pd${idx}">
+      <div class="detail" id="${prefix}d${idx}">
         <div class="detail-inner">
           <div class="dtitle">品項明細</div>
           <table class="dtbl">
@@ -385,15 +412,15 @@ function renderPending(list) {
   }).join('');
 }
  
-function renderDone(list) {
-  const el = document.getElementById('list-done');
+function renderDone(list, targetId, prefix) {
+  const el = document.getElementById(targetId);
   if(!list.length) {
     el.innerHTML = '<div class="empty-state"><i class="ti ti-check-square" aria-hidden="true"></i>尚無已完成訂單</div>';
     return;
   }
   el.innerHTML = list.map((o, idx) => {
     return `<div class="po-card done-card">
-      <div class="po-header" onclick="toggle('dd${idx}','dch${idx}')">
+      <div class="po-header" onclick="toggle('${prefix}d${idx}','${prefix}ch${idx}')">
         <div class="po-title">
           <div class="po-no" style="color:#1D9E75;">${o.po}</div>
           <div class="po-sub">${o.project || ''}${o.project && o.supplier ? ' ・ ' : ''}${o.supplier || ''}</div>
@@ -403,9 +430,9 @@ function renderDone(list) {
           <div class="po-amount-sub">${o.totalCount} 項全數完成</div>
         </div>
         <span class="chip chip-done"><i class="ti ti-check" aria-hidden="true" style="font-size:11px;"></i>已完成</span>
-        <i class="ti ti-chevron-down chevron" id="dch${idx}" aria-hidden="true"></i>
+        <i class="ti ti-chevron-down chevron" id="${prefix}ch${idx}" aria-hidden="true"></i>
       </div>
-      <div class="detail" id="dd${idx}">
+      <div class="detail" id="${prefix}d${idx}">
         <div class="detail-inner">
           <div class="dtitle">訂單完整內容</div>
           <table class="dtbl">
@@ -448,8 +475,9 @@ function toggle(detailId, chevronId) {
 function switchTab(tab, btn) {
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
-  document.getElementById('tab-pending').style.display = tab === 'pending' ? 'block' : 'none';
-  document.getElementById('tab-done').style.display    = tab === 'done'    ? 'block' : 'none';
+  ['main-pending','main-done','wh-pending','wh-done'].forEach(id => {
+    document.getElementById('tab-' + id).style.display = tab === id ? 'block' : 'none';
+  });
 }
  
 function loadSample() {
