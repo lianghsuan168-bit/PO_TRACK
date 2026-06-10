@@ -98,9 +98,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Helvetica Neue',Ar
 .bu{background:#FCEBEB;color:#A32D2D;}
 .invoice-missing-card{border-left:4px solid #D85A30;background:#FFF7F4;}
 .invoice-ok-card{border-left:4px solid #1D9E75;}
+.invoice-ready-card{border-left:4px solid #E0A400;background:#FFF8E1;box-shadow:0 0 0 1px rgba(224,164,0,.18);}
 .chip-invoice-missing{background:#FCEBEB;color:#A32D2D;font-weight:600;}
 .chip-invoice-ok{background:#EAF3DE;color:#3B6D11;font-weight:600;}
 .chip-invoice-diff{background:#FFF3D6;color:#9A5B00;font-weight:600;}
+.chip-invoice-ready{background:#FFE8A3;color:#8A5A00;font-weight:700;}
 .c-warn{color:#9A5B00;font-weight:500;}
  
 @media(max-width:600px){
@@ -1042,6 +1044,11 @@ function getMasterItemsByPO(po) {
     .filter(row => normalizePO(row.po) === key);
 }
 
+function isAllDeliveredInMaster(po) {
+  const rows = getMasterItemsByPO(po);
+  return rows.length > 0 && rows.every(row => row.isDelivered);
+}
+
 function getMasterStatusForPOItem(po, itemName) {
   const rows = getMasterItemsByPO(po);
   if(!rows.length) return '—';
@@ -1110,13 +1117,28 @@ function renderInvoiceMatch(list, targetId, prefix) {
       <div class="sr-item"><span class="sr-label">差額總計</span><span class="sr-value ${totalDiffAmount === 0 ? 'c-green' : 'c-warn'}">${moneyText(totalDiffAmount)}</span></div>
     </div>
   ` + list.map((o, idx) => {
-    const cardClass = !o.hasInvoice ? 'po-card invoice-missing-card' : (o.isAmountMatched ? 'po-card invoice-ok-card' : 'po-card invoice-missing-card');
-    const chipClass = !o.hasInvoice ? 'chip chip-invoice-missing' : (o.isAmountMatched ? 'chip chip-invoice-ok' : 'chip chip-invoice-diff');
-    const chipText = !o.hasInvoice ? '未開發票' : (o.isAmountMatched ? `金額一致 ${o.invoiceCount} 筆` : `金額不符 ${o.invoiceCount} 筆`);
+    const allDeliveredNoInvoice = !o.hasInvoice && isAllDeliveredInMaster(o.po);
+    const cardClass = allDeliveredNoInvoice
+      ? 'po-card invoice-ready-card'
+      : !o.hasInvoice
+        ? 'po-card invoice-missing-card'
+        : (o.isAmountMatched ? 'po-card invoice-ok-card' : 'po-card invoice-missing-card');
+    const chipClass = allDeliveredNoInvoice
+      ? 'chip chip-invoice-ready'
+      : !o.hasInvoice
+        ? 'chip chip-invoice-missing'
+        : (o.isAmountMatched ? 'chip chip-invoice-ok' : 'chip chip-invoice-diff');
+    const chipText = allDeliveredNoInvoice
+      ? '已交未開票'
+      : !o.hasInvoice
+        ? '未開發票'
+        : (o.isAmountMatched ? `金額一致 ${o.invoiceCount} 筆` : `金額不符 ${o.invoiceCount} 筆`);
     const diffText = o.hasInvoice ? ` ・ 差額 NT$${o.diff.toLocaleString()}` : '';
     const invoiceText = o.hasInvoice
       ? `發票 NT$${o.invoiceAmount.toLocaleString()}${diffText}${o.invoiceNos.length ? ' ・ ' + o.invoiceNos.join('、') : ''}`
-      : '尚未在發票檔找到對應 PO';
+      : allDeliveredNoInvoice
+        ? '總表/倉庫品項已全部已交，但尚未開發票'
+        : '尚未在發票檔找到對應 PO';
 
     return `<div class="${cardClass}">
       <div class="po-header" onclick="toggle('${prefix}d${idx}','${prefix}ch${idx}')">
@@ -1160,7 +1182,7 @@ function renderInvoiceMatch(list, targetId, prefix) {
             <div class="sr-item"><span class="sr-label">PO 金額</span><span class="sr-value">NT$${o.poTotal.toLocaleString()}</span></div>
             <div class="sr-item"><span class="sr-label">發票金額</span><span class="sr-value ${!o.hasInvoice ? 'c-red' : (o.isAmountMatched ? 'c-green' : 'c-warn')}">${o.hasInvoice ? 'NT$' + o.invoiceAmount.toLocaleString() : '未開立'}</span></div>
             <div class="sr-item"><span class="sr-label">差額</span><span class="sr-value ${o.diff === 0 ? 'c-green' : (o.hasInvoice ? 'c-warn' : 'c-red')}">NT$${o.diff.toLocaleString()}</span></div>
-            ${o.hasInvoice ? `<div class="sr-item"><span class="sr-label">發票筆數</span><span class="sr-value">${o.invoiceCount}</span></div>` : `<div class="sr-item"><span class="sr-label">狀態</span><span class="sr-value" style="color:#D85A30;">未開發票</span></div>`}
+            ${o.hasInvoice ? `<div class="sr-item"><span class="sr-label">發票筆數</span><span class="sr-value">${o.invoiceCount}</span></div>` : `<div class="sr-item"><span class="sr-label">狀態</span><span class="sr-value ${allDeliveredNoInvoice ? 'c-warn' : 'c-red'}">${allDeliveredNoInvoice ? '已交未開票' : '未開發票'}</span></div>`}
           </div>
         </div>
       </div>
