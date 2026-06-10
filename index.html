@@ -13,7 +13,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Helvetica Neue',Ar
 .header h1{font-size:22px;font-weight:500;color:#1a1a1a;}
 .header p{font-size:13px;color:#666;margin-top:3px;}
  
-.upload-area{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:1.25rem;}
+.upload-area{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:1.25rem;}
 .upload-box{border:1px solid #ddd;border-radius:12px;padding:.875rem 1.1rem;background:#fff;cursor:pointer;transition:border-color .15s;position:relative;overflow:hidden;}
 .upload-box:hover{border-color:#aaa;}
 .upload-box.loaded{border-color:#1D9E75;}
@@ -96,6 +96,12 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Helvetica Neue',Ar
 .urgent-card{border-left:4px solid #D85A30;background:#FFF7F4;}
 .chip-urgent{background:#FCEBEB;color:#C62828;font-weight:600;}
 .bu{background:#FCEBEB;color:#A32D2D;}
+.invoice-missing-card{border-left:4px solid #D85A30;background:#FFF7F4;}
+.invoice-ok-card{border-left:4px solid #1D9E75;}
+.chip-invoice-missing{background:#FCEBEB;color:#A32D2D;font-weight:600;}
+.chip-invoice-ok{background:#EAF3DE;color:#3B6D11;font-weight:600;}
+.chip-invoice-diff{background:#FFF3D6;color:#9A5B00;font-weight:600;}
+.c-warn{color:#9A5B00;font-weight:500;}
  
 @media(max-width:600px){
   .upload-area{grid-template-columns:1fr;}
@@ -124,6 +130,12 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Helvetica Neue',Ar
       <div class="upload-hint">客戶下的採購訂單 Excel 或 CSV</div>
       <div class="upload-status" id="status-po"><i class="ti ti-check" aria-hidden="true"></i> <span id="fname-po"></span></div>
     </div>
+    <div class="upload-box" id="box-invoice">
+      <input type="file" accept=".xlsx,.xls,.csv" id="file-invoice" onchange="handleInvoice(this)">
+      <div class="upload-label"><i class="ti ti-receipt" aria-hidden="true"></i>發票檔</div>
+      <div class="upload-hint">上傳發票 Excel，與 PO 檔比對是否已開發票</div>
+      <div class="upload-status" id="status-invoice"><i class="ti ti-check" aria-hidden="true"></i> <span id="fname-invoice"></span></div>
+    </div>
   </div>
  
   <div id="summary-bar" class="summary-bar" style="display:none;">
@@ -140,6 +152,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Helvetica Neue',Ar
     <button class="tab-btn" onclick="switchTab('wh-pending',this)">倉庫未完成 <span class="badge bp" id="badge-wh-p">0</span></button>
     <button class="tab-btn" onclick="switchTab('wh-done',this)">倉庫已完成 <span class="badge bd" id="badge-wh-d">0</span></button>
     <button class="tab-btn" onclick="switchTab('missing-po',this)">未收到 PO <span class="badge bp" id="badge-missing-po">0</span></button>
+    <button class="tab-btn" onclick="switchTab('invoice-match',this)">發票匹配 <span class="badge bu" id="badge-invoice-missing">0</span></button>
   </div>
  
   <div id="tab-urgent">
@@ -175,6 +188,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Helvetica Neue',Ar
       <div class="empty-state"><i class="ti ti-file-alert" aria-hidden="true"></i>尚無未收到 PO 的項目</div>
     </div>
   </div>
+  <div id="tab-invoice-match" style="display:none;">
+    <div class="po-list" id="list-invoice-match">
+      <div class="empty-state"><i class="ti ti-receipt" aria-hidden="true"></i>請先上傳 PO 檔與發票檔進行匹配</div>
+    </div>
+  </div>
 </div>
  
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -182,7 +200,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Helvetica Neue',Ar
 let masterMainData = [];
 let warehouseData = [];
 let poData = null;
+let invoiceData = null;
 let allOrders = [];
+let dashboardSummary = {total: 0, pending: 0, done: 0, amount: 0};
+let invoiceSummary = {poCount: 0, invoicedCount: 0, missingCount: 0, poTotal: 0, invoiceTotal: 0, missingAmount: 0, diffTotal: 0};
+let currentTab = 'urgent';
 const DEFAULT_MASTER_FILE = './data/訂單總表.xlsx';
 
 function loadMasterWorkbook(arrayBuffer, fileName, isDefault=false) {
@@ -257,6 +279,29 @@ function handlePO(input) {
   r.readAsArrayBuffer(f);
 }
  
+
+function handleInvoice(input) {
+  const f = input.files[0]; if(!f) return;
+  document.getElementById('fname-invoice').textContent = f.name;
+  document.getElementById('status-invoice').classList.add('show');
+  document.getElementById('box-invoice').classList.add('loaded');
+
+  const r = new FileReader();
+  r.onload = e => {
+    try {
+      const wb = XLSX.read(e.target.result, {type:'array', cellDates:true});
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(ws, {header:1, defval:''});
+      invoiceData = parseInvoice(rows);
+      tryProcess();
+    } catch(err) {
+      console.error('發票檔讀取失敗', err);
+      alert('發票檔讀取失敗，請確認檔案格式是否正確。');
+    }
+  };
+  r.readAsArrayBuffer(f);
+}
+
 function findHeaderRow(rows) {
   for(let i = 0; i < Math.min(5, rows.length); i++) {
     const row = rows[i].map(c => String(c).trim());
@@ -303,28 +348,139 @@ function parseMaster(rows) {
 }
  
 function parsePO(rows) {
-  const hi = findHeaderRow(rows);
-  const headers = rows[hi].map(c => String(c).replace(/[\n\r]/g,' ').trim());
-  const idx = h => {
-    const i = headers.indexOf(h);
-    if(i >= 0) return i;
-    return headers.findIndex(x => x.includes(h));
+  // 支援多種 PO 檔欄位名稱：
+  // 例如 PO / PO NO / order_no / order no / 訂單 / 採購單
+  // 品名可為 料號名稱 / 品名 / item / description
+  let hi = 0;
+
+  const headerLooksLikePO = row => {
+    const cells = (row || []).map(c => String(c).replace(/[\n\r]/g,' ').trim().toLowerCase());
+    const hasPO = cells.some(c =>
+      c === 'po' ||
+      c === 'po no' ||
+      c === 'po no.' ||
+      c.includes('po號') ||
+      c.includes('po no') ||
+      c.includes('order_no') ||
+      c.includes('order no') ||
+      c.includes('order') ||
+      c.includes('訂單') ||
+      c.includes('採購單')
+    );
+    const hasItem = cells.some(c =>
+      c.includes('料號名稱') ||
+      c.includes('品名') ||
+      c === 'item' ||
+      c.includes('description') ||
+      c.includes('product') ||
+      c.includes('品項') ||
+      c.includes('名稱')
+    );
+    return hasPO || hasItem;
   };
-  const data = [];
-  for(let i = hi + 1; i < rows.length; i++) {
-    const r = rows[i];
-    if(!r || r.every(c => c === '' || c === null)) continue;
-    const po        = String(r[idx('PO')] || r[0] || '').trim();
-    const name      = String(r[idx('料號名稱')] || r[idx('品名')] || '').trim();
-    if(!name) continue;
-    const qty       = parseFloat(r[idx('數量')]) || 0;
-    const unitPrice = parseFloat(r[idx('單價')]) || 0;
-    const total     = parseFloat(r[idx('合計')]) || 0;
-    data.push({po, name, qty, unitPrice, total});
+
+  for(let i = 0; i < Math.min(10, rows.length); i++) {
+    if(headerLooksLikePO(rows[i])) {
+      hi = i;
+      break;
+    }
   }
+
+  const headers = (rows[hi] || []).map(c => String(c).replace(/[\n\r]/g,' ').trim().toLowerCase());
+
+  const findIdx = keys => {
+    for(const key of keys) {
+      const k = String(key).toLowerCase();
+      const exact = headers.indexOf(k);
+      if(exact >= 0) return exact;
+      const partial = headers.findIndex(h => h.includes(k));
+      if(partial >= 0) return partial;
+    }
+    return -1;
+  };
+
+  const poIdx = findIdx([
+    'po', 'po no', 'po no.', 'po號', 'po號碼',
+    'order_no', 'order no', 'order', '訂單', '採購單'
+  ]);
+  const nameIdx = findIdx([
+    '料號名稱', '品名', 'item', 'description', 'product', '品項', '名稱'
+  ]);
+  const qtyIdx = findIdx(['數量', 'qty', 'quantity']);
+  const unitIdx = findIdx(['單位', 'unit']);
+  const unitPriceIdx = findIdx(['單價', 'unit price', 'price']);
+  const totalIdx = findIdx(['合計', '總價', '總金額', 'amount', 'total']);
+
+  const data = [];
+  const start = hi + 1;
+
+  for(let i = start; i < rows.length; i++) {
+    const r = rows[i];
+    if(!r || r.every(c => c === '' || c === null || c === undefined)) continue;
+
+    const po = String((poIdx >= 0 ? r[poIdx] : r[0]) || '').trim();
+    if(!po) continue;
+
+    // 若沒有品名欄，仍保留 PO，否則發票匹配會沒有資料
+    const name = String((nameIdx >= 0 ? r[nameIdx] : '') || '').trim();
+    const qty = parseFloat(String((qtyIdx >= 0 ? r[qtyIdx] : '') || '').replace(/,/g, '')) || 0;
+    const unit = String((unitIdx >= 0 ? r[unitIdx] : '') || '').trim();
+    const unitPrice = parseFloat(String((unitPriceIdx >= 0 ? r[unitPriceIdx] : '') || '').replace(/,/g, '')) || 0;
+    const total = parseFloat(String((totalIdx >= 0 ? r[totalIdx] : '') || '').replace(/,/g, '')) || 0;
+
+    data.push({po, name, qty, unit, unitPrice, total});
+  }
+
   return data;
 }
  
+
+function parseInvoice(rows) {
+  let hi = 0;
+  for(let i = 0; i < Math.min(10, rows.length); i++) {
+    const row = (rows[i] || []).map(c => String(c).trim().toLowerCase());
+    if(row.some(c => c === 'po' || c.includes('po') || c.includes('採購單') || c.includes('訂單'))) {
+      hi = i;
+      break;
+    }
+  }
+
+  const headers = (rows[hi] || []).map(c => String(c).replace(/[\n\r]/g,' ').trim().toLowerCase());
+  const findIdx = keys => {
+    for(const key of keys) {
+      const exact = headers.indexOf(String(key).toLowerCase());
+      if(exact >= 0) return exact;
+      const partial = headers.findIndex(h => h.includes(String(key).toLowerCase()));
+      if(partial >= 0) return partial;
+    }
+    return -1;
+  };
+
+  const poIdx = findIdx(['po', '採購單', '訂單']);
+  const amountIdx = findIdx(['price', 'amount', '金額', '發票金額', '未稅', '含稅', '合計']);
+  const invoiceNoIdx = findIdx(['invoice', '發票', '發票號碼', '號碼']);
+
+  const data = [];
+  const start = (poIdx >= 0) ? hi + 1 : 0;
+
+  for(let i = start; i < rows.length; i++) {
+    const r = rows[i];
+    if(!r || r.every(c => c === '' || c === null || c === undefined)) continue;
+
+    const po = String((poIdx >= 0 ? r[poIdx] : r[0]) || '').trim();
+    if(!po) continue;
+
+    const amountRaw = amountIdx >= 0 ? r[amountIdx] : r[1];
+    const amount = parseFloat(String(amountRaw || '').replace(/,/g, '')) || 0;
+    const invoiceNo = invoiceNoIdx >= 0 ? String(r[invoiceNoIdx] || '').trim() : '';
+
+    data.push({po, amount, invoiceNo});
+  }
+
+  return data;
+}
+
+
 function tryProcess() {
   if(masterMainData.length || warehouseData.length) processDataBySource();
 }
@@ -377,6 +533,121 @@ function isMissingPOOrder(order, receivedPOSet) {
   return false;
 }
 
+
+function getInvoiceMap() {
+  const map = new Map();
+  (invoiceData || []).forEach(row => {
+    const po = normalizePO(row.po);
+    if(!po) return;
+    if(!map.has(po)) {
+      map.set(po, {po: row.po, count: 0, amount: 0, invoiceNos: []});
+    }
+    const info = map.get(po);
+    info.count += 1;
+    info.amount += row.amount || 0;
+    if(row.invoiceNo) info.invoiceNos.push(row.invoiceNo);
+  });
+  return map;
+}
+
+function buildPOInvoiceMatches() {
+  const invoiceMap = getInvoiceMap();
+  const poMap = new Map();
+
+  (poData || []).forEach(row => {
+    const key = normalizePO(row.po);
+    if(!key) return;
+    if(!poMap.has(key)) {
+      poMap.set(key, {po: row.po, items: [], poTotal: 0});
+    }
+    const item = poMap.get(key);
+    item.items.push(row);
+    item.poTotal += row.total || 0;
+  });
+
+  return [...poMap.entries()].map(([key, poInfo]) => {
+    const inv = invoiceMap.get(key);
+    const invoiceAmount = inv ? inv.amount : 0;
+    const diff = invoiceAmount - poInfo.poTotal;
+    const isAmountMatched = !!inv && Math.round(diff) === 0;
+    const status = !inv ? '未開發票' : isAmountMatched ? '金額一致' : '金額不符';
+    return {
+      poKey: key,
+      po: poInfo.po,
+      items: poInfo.items,
+      poTotal: poInfo.poTotal,
+      hasInvoice: !!inv,
+      invoiceCount: inv ? inv.count : 0,
+      invoiceAmount,
+      diff,
+      isAmountMatched,
+      status,
+      invoiceNos: inv ? inv.invoiceNos : []
+    };
+  }).sort((a, b) => {
+    if(a.hasInvoice !== b.hasInvoice) return a.hasInvoice ? 1 : -1;
+    return String(a.po).localeCompare(String(b.po));
+  });
+}
+
+
+
+function buildInvoiceSummary(list) {
+  const poTotal = (list || []).reduce((s, x) => s + (x.poTotal || 0), 0);
+  const invoiceTotal = (list || []).reduce((s, x) => s + (x.invoiceAmount || 0), 0);
+  const missingAmount = (list || []).filter(x => !x.hasInvoice).reduce((s, x) => s + (x.poTotal || 0), 0);
+  const missingCount = (list || []).filter(x => !x.hasInvoice).length;
+  const invoicedCount = (list || []).length - missingCount;
+  return {
+    poCount: (list || []).length,
+    invoicedCount,
+    missingCount,
+    poTotal,
+    invoiceTotal,
+    missingAmount,
+    diffTotal: invoiceTotal - poTotal
+  };
+}
+
+function moneyText(value) {
+  const n = Math.round(Number(value || 0));
+  return 'NT$' + n.toLocaleString();
+}
+
+function getInvoiceFileTotal() {
+  if(!invoiceData || !invoiceData.length) return null;
+  return invoiceData.reduce((sum, row) => sum + (Number(row.amount) || 0), 0);
+}
+
+function invoiceTotalDisplay() {
+  const total = getInvoiceFileTotal();
+  return total === null ? '—' : moneyText(total);
+}
+
+function setMetricLabels(labels) {
+  const metricLabels = document.querySelectorAll('#summary-bar .metric-label');
+  labels.forEach((label, idx) => {
+    if(metricLabels[idx]) metricLabels[idx].textContent = label;
+  });
+}
+
+function updateSummaryForTab(tab) {
+  if(tab === 'invoice-match') {
+    setMetricLabels(['PO 總數', '未開發票', '已開發票', '發票總額']);
+    document.getElementById('m-total').textContent = invoiceSummary.poCount || 0;
+    document.getElementById('m-pending').textContent = invoiceSummary.missingCount || 0;
+    document.getElementById('m-done').textContent = invoiceSummary.invoicedCount || 0;
+    document.getElementById('m-amount').textContent = invoiceTotalDisplay();
+    return;
+  }
+
+  setMetricLabels(['PO 總數', '未完成', '已完成', '總金額']);
+  document.getElementById('m-total').textContent = dashboardSummary.total || 0;
+  document.getElementById('m-pending').textContent = dashboardSummary.pending || 0;
+  document.getElementById('m-done').textContent = dashboardSummary.done || 0;
+  document.getElementById('m-amount').textContent = invoiceTotalDisplay();
+}
+
 function processDataBySource() {
   const receivedPOSet = getReceivedPOSet();
   const mainOrdersAll      = buildOrders(masterMainData, '總表');
@@ -403,10 +674,12 @@ function processDataBySource() {
   allOrders = [...mainOrders, ...warehouseOrders, ...missingPOOrders];
   const grandTotal = allOrders.reduce((s, o) => s + o.total, 0);
 
-  document.getElementById('m-total').textContent   = allOrders.length;
-  document.getElementById('m-pending').textContent = mainPending.length + whPending.length + missingPOOrders.filter(o => !o.isDone).length;
-  document.getElementById('m-done').textContent    = mainDone.length + whDone.length + missingPOOrders.filter(o => o.isDone).length;
-  document.getElementById('m-amount').textContent  = 'NT$' + grandTotal.toLocaleString();
+  dashboardSummary = {
+    total: allOrders.length,
+    pending: mainPending.length + whPending.length + missingPOOrders.filter(o => !o.isDone).length,
+    done: mainDone.length + whDone.length + missingPOOrders.filter(o => o.isDone).length,
+    amount: grandTotal
+  };
 
   document.getElementById('badge-urgent').textContent   = urgentOrders.length;
   document.getElementById('badge-main-p').textContent   = mainPending.length;
@@ -414,7 +687,14 @@ function processDataBySource() {
   document.getElementById('badge-wh-p').textContent     = whPending.length;
   document.getElementById('badge-wh-d').textContent     = whDone.length;
   document.getElementById('badge-missing-po').textContent = missingPOOrders.length;
+
+  const invoiceMatches = buildPOInvoiceMatches();
+  const invoiceMissingCount = invoiceMatches.filter(x => !x.hasInvoice).length;
+  invoiceSummary = buildInvoiceSummary(invoiceMatches);
+  document.getElementById('badge-invoice-missing').textContent = invoiceMissingCount;
+
   document.getElementById('summary-bar').style.display = 'grid';
+  updateSummaryForTab(currentTab);
 
   renderUrgent(urgentOrders, 'list-urgent', 'ug');
   renderPending(mainPending, 'list-main-pending', 'mp');
@@ -422,6 +702,7 @@ function processDataBySource() {
   renderPending(whPending, 'list-wh-pending', 'wp');
   renderDone(whDone, 'list-wh-done', 'wd');
   renderMissingPO(missingPOOrders, 'list-missing-po', 'np');
+  renderInvoiceMatch(invoiceMatches, 'list-invoice-match', 'iv');
 }
 
 function processData(master, po) {
@@ -699,17 +980,114 @@ function renderMissingPO(list, targetId, prefix) {
   }).join('');
 }
 
+
+function renderInvoiceMatch(list, targetId, prefix) {
+  const el = document.getElementById(targetId);
+
+  if(!poData || !poData.length) {
+    el.innerHTML = '<div class="empty-state"><i class="ti ti-file-invoice" aria-hidden="true"></i>請先上傳 PO 檔，才能與發票檔匹配</div>';
+    return;
+  }
+
+  if(!invoiceData || !invoiceData.length) {
+    el.innerHTML = '<div class="empty-state"><i class="ti ti-receipt" aria-hidden="true"></i>請上傳發票檔，未開發票的 PO 會在這裡標紅</div>';
+    return;
+  }
+
+  if(!list.length) {
+    el.innerHTML = '<div class="empty-state"><i class="ti ti-circle-check" aria-hidden="true"></i>沒有可匹配的 PO</div>';
+    return;
+  }
+
+  const missingCount = list.filter(x => !x.hasInvoice).length;
+  const invoicedCount = list.length - missingCount;
+  const diffCount = list.filter(x => x.hasInvoice && !x.isAmountMatched).length;
+  const matchedCount = list.filter(x => x.hasInvoice && x.isAmountMatched).length;
+  const totalPOAmount = list.reduce((s, x) => s + (x.poTotal || 0), 0);
+  const totalInvoiceAmount = list.reduce((s, x) => s + (x.invoiceAmount || 0), 0);
+  const totalMissingAmount = list.filter(x => !x.hasInvoice).reduce((s, x) => s + (x.poTotal || 0), 0);
+  const totalDiffAmount = totalInvoiceAmount - totalPOAmount;
+
+  el.innerHTML = `
+    <div class="summary-row" style="margin-bottom:10px;">
+      <div class="sr-item"><span class="sr-label">PO 總數</span><span class="sr-value">${list.length}</span></div>
+      <div class="sr-item"><span class="sr-label">金額一致</span><span class="sr-value c-green">${matchedCount}</span></div>
+      <div class="sr-item"><span class="sr-label">金額不符</span><span class="sr-value c-warn">${diffCount}</span></div>
+      <div class="sr-item"><span class="sr-label">未開發票</span><span class="sr-value" style="color:#D85A30;">${missingCount}</span></div>
+      <div class="sr-item"><span class="sr-label">PO總額</span><span class="sr-value">${moneyText(totalPOAmount)}</span></div>
+      <div class="sr-item"><span class="sr-label">發票總額</span><span class="sr-value c-green">${moneyText(totalInvoiceAmount)}</span></div>
+      <div class="sr-item"><span class="sr-label">未開發票金額</span><span class="sr-value c-red">${moneyText(totalMissingAmount)}</span></div>
+      <div class="sr-item"><span class="sr-label">差額總計</span><span class="sr-value ${totalDiffAmount === 0 ? 'c-green' : 'c-warn'}">${moneyText(totalDiffAmount)}</span></div>
+    </div>
+  ` + list.map((o, idx) => {
+    const cardClass = !o.hasInvoice ? 'po-card invoice-missing-card' : (o.isAmountMatched ? 'po-card invoice-ok-card' : 'po-card invoice-missing-card');
+    const chipClass = !o.hasInvoice ? 'chip chip-invoice-missing' : (o.isAmountMatched ? 'chip chip-invoice-ok' : 'chip chip-invoice-diff');
+    const chipText = !o.hasInvoice ? '未開發票' : (o.isAmountMatched ? `金額一致 ${o.invoiceCount} 筆` : `金額不符 ${o.invoiceCount} 筆`);
+    const diffText = o.hasInvoice ? ` ・ 差額 NT$${o.diff.toLocaleString()}` : '';
+    const invoiceText = o.hasInvoice
+      ? `發票 NT$${o.invoiceAmount.toLocaleString()}${diffText}${o.invoiceNos.length ? ' ・ ' + o.invoiceNos.join('、') : ''}`
+      : '尚未在發票檔找到對應 PO';
+
+    return `<div class="${cardClass}">
+      <div class="po-header" onclick="toggle('${prefix}d${idx}','${prefix}ch${idx}')">
+        <div class="po-title">
+          <div class="po-no">${o.po}</div>
+          <div class="po-sub">${invoiceText}</div>
+        </div>
+        <div class="po-right">
+          <div class="po-amount">PO NT$${o.poTotal.toLocaleString()}</div>
+          <div class="po-amount-sub">${o.items.length} 項</div>
+        </div>
+        <span class="${chipClass}">${chipText}</span>
+        <i class="ti ti-chevron-down chevron" id="${prefix}ch${idx}" aria-hidden="true"></i>
+      </div>
+      <div class="detail" id="${prefix}d${idx}">
+        <div class="detail-inner">
+          <div class="dtitle">PO 品項與發票匹配</div>
+          <table class="dtbl">
+            <colgroup>
+              <col style="width:30%"><col style="width:10%"><col style="width:12%"><col style="width:14%"><col style="width:14%"><col style="width:20%">
+            </colgroup>
+            <thead><tr>
+              <th>品名</th><th class="num">數量</th><th class="num">單價</th><th class="num">PO金額</th><th class="num">發票金額</th><th style="text-align:center;">狀態</th>
+            </tr></thead>
+            <tbody>
+              ${o.items.map(item => `<tr>
+                <td>${item.name || '—'}</td>
+                <td class="num">${item.qty || '—'}</td>
+                <td class="num">${item.unitPrice > 0 ? item.unitPrice.toLocaleString() : '—'}</td>
+                <td class="num">${item.total > 0 ? 'NT$' + item.total.toLocaleString() : '—'}</td>
+                <td class="num ${!o.hasInvoice ? 'c-red' : (o.isAmountMatched ? 'c-green' : 'c-warn')}">${o.hasInvoice ? 'NT$' + o.invoiceAmount.toLocaleString() : '未開立'}</td>
+                <td style="text-align:center;"><span class="${chipClass}">${chipText}</span></td>
+              </tr>`).join('')}
+            </tbody>
+          </table>
+          <div class="summary-row">
+            <div class="sr-item"><span class="sr-label">PO 金額</span><span class="sr-value">NT$${o.poTotal.toLocaleString()}</span></div>
+            <div class="sr-item"><span class="sr-label">發票金額</span><span class="sr-value ${!o.hasInvoice ? 'c-red' : (o.isAmountMatched ? 'c-green' : 'c-warn')}">${o.hasInvoice ? 'NT$' + o.invoiceAmount.toLocaleString() : '未開立'}</span></div>
+            <div class="sr-item"><span class="sr-label">差額</span><span class="sr-value ${o.diff === 0 ? 'c-green' : (o.hasInvoice ? 'c-warn' : 'c-red')}">NT$${o.diff.toLocaleString()}</span></div>
+            ${o.hasInvoice ? `<div class="sr-item"><span class="sr-label">發票筆數</span><span class="sr-value">${o.invoiceCount}</span></div>` : `<div class="sr-item"><span class="sr-label">狀態</span><span class="sr-value" style="color:#D85A30;">未開發票</span></div>`}
+          </div>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+
 function toggle(detailId, chevronId) {
   document.getElementById(detailId)?.classList.toggle('open');
   document.getElementById(chevronId)?.classList.toggle('open');
 }
  
 function switchTab(tab, btn) {
+  currentTab = tab;
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
-  ['urgent','main-pending','main-done','wh-pending','wh-done','missing-po'].forEach(id => {
+  ['urgent','main-pending','main-done','wh-pending','wh-done','missing-po','invoice-match'].forEach(id => {
     document.getElementById('tab-' + id).style.display = tab === id ? 'block' : 'none';
   });
+  updateSummaryForTab(tab);
 }
  
 function loadSample() {
