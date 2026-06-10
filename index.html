@@ -599,6 +599,20 @@ function getInvoiceMap() {
   return map;
 }
 
+function invoiceSortRank(x) {
+  // ① 總表/倉庫已全部交貨，但尚未開發票（金黃色）排最上面
+  if(!x.hasInvoice && x.allDelivered) return 0;
+
+  // ② 尚未開發票，但還沒有全部交貨（紅色）
+  if(!x.hasInvoice) return 1;
+
+  // ③ 已開發票但金額不符
+  if(!x.isAmountMatched) return 2;
+
+  // ④ 已開發票且金額一致
+  return 3;
+}
+
 function buildPOInvoiceMatches() {
   const invoiceMap = getInvoiceMap();
   const poMap = new Map();
@@ -619,7 +633,13 @@ function buildPOInvoiceMatches() {
     const invoiceAmount = inv ? inv.amount : 0;
     const diff = invoiceAmount - poInfo.poTotal;
     const isAmountMatched = !!inv && Math.round(diff) === 0;
-    const status = !inv ? '未開發票' : isAmountMatched ? '金額一致' : '金額不符';
+    const allDelivered = isAllDeliveredInMaster(poInfo.po);
+    const status = !inv
+      ? (allDelivered ? '已交未開票' : '未開發票')
+      : isAmountMatched
+        ? '金額一致'
+        : '金額不符';
+
     return {
       poKey: key,
       po: poInfo.po,
@@ -630,15 +650,19 @@ function buildPOInvoiceMatches() {
       invoiceAmount,
       diff,
       isAmountMatched,
+      allDelivered,
       status,
       invoiceNos: inv ? inv.invoiceNos : []
     };
   }).sort((a, b) => {
-    if(a.hasInvoice !== b.hasInvoice) return a.hasInvoice ? 1 : -1;
+    const rankA = invoiceSortRank(a);
+    const rankB = invoiceSortRank(b);
+
+    if(rankA !== rankB) return rankA - rankB;
+
     return String(a.po).localeCompare(String(b.po));
   });
 }
-
 
 
 function buildInvoiceSummary(list) {
@@ -1117,7 +1141,7 @@ function renderInvoiceMatch(list, targetId, prefix) {
       <div class="sr-item"><span class="sr-label">差額總計</span><span class="sr-value ${totalDiffAmount === 0 ? 'c-green' : 'c-warn'}">${moneyText(totalDiffAmount)}</span></div>
     </div>
   ` + list.map((o, idx) => {
-    const allDeliveredNoInvoice = !o.hasInvoice && isAllDeliveredInMaster(o.po);
+    const allDeliveredNoInvoice = !o.hasInvoice && o.allDelivered;
     const cardClass = allDeliveredNoInvoice
       ? 'po-card invoice-ready-card'
       : !o.hasInvoice
