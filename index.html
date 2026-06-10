@@ -1028,6 +1028,49 @@ function renderMissingPO(list, targetId, prefix) {
 }
 
 
+
+function normalizeItemName(name) {
+  return String(name || '')
+    .replace(/[\s　]+/g, '')
+    .replace(/[()（）\-_/\\]/g, '')
+    .toUpperCase();
+}
+
+function getMasterItemsByPO(po) {
+  const key = normalizePO(po);
+  return [...(masterMainData || []), ...(warehouseData || [])]
+    .filter(row => normalizePO(row.po) === key);
+}
+
+function getMasterStatusForPOItem(po, itemName) {
+  const rows = getMasterItemsByPO(po);
+  if(!rows.length) return '—';
+
+  const itemKey = normalizeItemName(itemName);
+  let matched = [];
+
+  if(itemKey) {
+    matched = rows.filter(row => {
+      const masterName = normalizeItemName(row.name);
+      return masterName === itemKey || masterName.includes(itemKey) || itemKey.includes(masterName);
+    });
+  }
+
+  const targetRows = matched.length ? matched : rows;
+  const statuses = [...new Set(targetRows.map(row => row.displayStatus || row.delivered || '未交').filter(Boolean))];
+  return statuses.length ? statuses.join('、') : '—';
+}
+
+function masterStatusClass(statusText) {
+  const text = String(statusText || '');
+  if(!text || text === '—') return 'c-muted';
+  if(text.includes('急') || text.toLowerCase().includes('urgent')) return 'c-red';
+  if(text.includes('未') || text.includes('待') || text.includes('到')) return 'c-red';
+  if(text.includes('退')) return 'c-red';
+  if(text.includes('已交') || text.includes('✓') || text.toLowerCase() === 'v') return 'c-green';
+  return 'c-warn';
+}
+
 function renderInvoiceMatch(list, targetId, prefix) {
   const el = document.getElementById(targetId);
 
@@ -1096,17 +1139,21 @@ function renderInvoiceMatch(list, targetId, prefix) {
               <col style="width:30%"><col style="width:10%"><col style="width:12%"><col style="width:14%"><col style="width:14%"><col style="width:20%">
             </colgroup>
             <thead><tr>
-              <th>品名</th><th class="num">數量</th><th class="num">單價</th><th class="num">PO金額</th><th class="num">發票金額</th><th style="text-align:center;">狀態</th>
+              <th>品名</th><th class="num">數量</th><th class="num">單價</th><th class="num">PO金額</th><th style="text-align:center;">已交狀態</th><th style="text-align:center;">狀態</th>
             </tr></thead>
             <tbody>
-              ${o.items.map(item => `<tr>
+              ${o.items.map(item => {
+                const masterStatus = getMasterStatusForPOItem(o.po, item.name);
+                const masterStatusCls = masterStatusClass(masterStatus);
+                return `<tr>
                 <td>${item.name || '—'}</td>
                 <td class="num">${item.qty || '—'}</td>
                 <td class="num">${item.unitPrice > 0 ? item.unitPrice.toLocaleString() : '—'}</td>
                 <td class="num">${item.total > 0 ? 'NT$' + item.total.toLocaleString() : '—'}</td>
-                <td class="num ${!o.hasInvoice ? 'c-red' : (o.isAmountMatched ? 'c-green' : 'c-warn')}">${o.hasInvoice ? 'NT$' + o.invoiceAmount.toLocaleString() : '未開立'}</td>
+                <td style="text-align:center;"><span class="${masterStatusCls}">${masterStatus}</span></td>
                 <td style="text-align:center;"><span class="${chipClass}">${chipText}</span></td>
-              </tr>`).join('')}
+              </tr>`;
+              }).join('')}
             </tbody>
           </table>
           <div class="summary-row">
