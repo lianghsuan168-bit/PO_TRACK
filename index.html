@@ -154,6 +154,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Helvetica Neue',Ar
     <button class="tab-btn" onclick="switchTab('wh-pending',this)">倉庫未完成 <span class="badge bp" id="badge-wh-p">0</span></button>
     <button class="tab-btn" onclick="switchTab('wh-done',this)">倉庫已完成 <span class="badge bd" id="badge-wh-d">0</span></button>
     <button class="tab-btn" onclick="switchTab('missing-po',this)">未收到 PO <span class="badge bp" id="badge-missing-po">0</span></button>
+    <button class="tab-btn" onclick="switchTab('missing-master',this)">未建總表 <span class="badge bu" id="badge-missing-master">0</span></button>
     <button class="tab-btn" onclick="switchTab('invoice-match',this)">發票匹配 <span class="badge bu" id="badge-invoice-missing">0</span></button>
   </div>
  
@@ -188,6 +189,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Helvetica Neue',Ar
   <div id="tab-missing-po" style="display:none;">
     <div class="po-list" id="list-missing-po">
       <div class="empty-state"><i class="ti ti-file-alert" aria-hidden="true"></i>尚無未收到 PO 的項目</div>
+    </div>
+  </div>
+  <div id="tab-missing-master" style="display:none;">
+    <div class="po-list" id="list-missing-master">
+      <div class="empty-state"><i class="ti ti-table-off" aria-hidden="true"></i>尚無未建總表的訂單</div>
     </div>
   </div>
   <div id="tab-invoice-match" style="display:none;">
@@ -736,6 +742,27 @@ function processDataBySource() {
     .filter(o => isMissingPOOrder(o, receivedPOSet))
     .sort((a, b) => a.source.localeCompare(b.source) || a.po.localeCompare(b.po));
 
+  // PO 檔有 order_no / PO，但訂單總表與倉庫都沒有對應 PO 時，列入「未建總表」。
+  const masterPOSet = new Set(
+    [...masterMainData, ...warehouseData]
+      .map(row => normalizePO(row.po))
+      .filter(Boolean)
+  );
+
+  const missingMasterMap = {};
+  (poData || []).forEach(row => {
+    const key = normalizePO(row.po);
+    if(!key || masterPOSet.has(key)) return;
+    if(!missingMasterMap[key]) {
+      missingMasterMap[key] = {po: row.po, items: [], total: 0};
+    }
+    missingMasterMap[key].items.push(row);
+    missingMasterMap[key].total += row.total || 0;
+  });
+
+  const missingMasterList = Object.values(missingMasterMap)
+    .sort((a, b) => String(a.po).localeCompare(String(b.po)));
+
   const mainOrders      = mainOrdersAll.filter(o => !isMissingPOOrder(o, receivedPOSet));
   const warehouseOrders = warehouseOrdersAll.filter(o => !isMissingPOOrder(o, receivedPOSet));
 
@@ -760,6 +787,7 @@ function processDataBySource() {
   document.getElementById('badge-wh-p').textContent     = whPending.length;
   document.getElementById('badge-wh-d').textContent     = whDone.length;
   document.getElementById('badge-missing-po').textContent = missingPOOrders.length;
+  document.getElementById('badge-missing-master').textContent = missingMasterList.length;
 
   const invoiceMatches = buildPOInvoiceMatches();
   const invoiceMissingCount = invoiceMatches.filter(x => !x.hasInvoice).length;
@@ -775,6 +803,7 @@ function processDataBySource() {
   renderPending(whPending, 'list-wh-pending', 'wp');
   renderDone(whDone, 'list-wh-done', 'wd');
   renderMissingPO(missingPOOrders, 'list-missing-po', 'np');
+  renderMissingMaster(missingMasterList, 'list-missing-master', 'nm');
   renderInvoiceMatch(invoiceMatches, 'list-invoice-match', 'iv');
 }
 
@@ -1054,6 +1083,58 @@ function renderMissingPO(list, targetId, prefix) {
 }
 
 
+function renderMissingMaster(list, targetId, prefix) {
+  const el = document.getElementById(targetId);
+  if(!list.length) {
+    el.innerHTML = '<div class="empty-state"><i class="ti ti-table-off" aria-hidden="true"></i>尚無未建總表的訂單</div>';
+    return;
+  }
+
+  el.innerHTML = list.map((o, idx) => {
+    return `<div class="po-card invoice-ready-card">
+      <div class="po-header" onclick="toggle('${prefix}d${idx}','${prefix}ch${idx}')">
+        <div class="po-title">
+          <div class="po-no">${o.po}</div>
+          <div class="po-sub">PO 檔存在，但訂單總表與倉庫沒有對應 PO</div>
+        </div>
+        <div class="po-right">
+          <div class="po-amount">NT$${o.total.toLocaleString()}</div>
+          <div class="po-amount-sub">${o.items.length} 項</div>
+        </div>
+        <span class="chip chip-invoice-ready">未建總表</span>
+        <i class="ti ti-chevron-down chevron" id="${prefix}ch${idx}" aria-hidden="true"></i>
+      </div>
+      <div class="detail" id="${prefix}d${idx}">
+        <div class="detail-inner">
+          <div class="dtitle">PO 檔品項</div>
+          <table class="dtbl">
+            <colgroup>
+              <col style="width:34%"><col style="width:13%"><col style="width:13%"><col style="width:20%"><col style="width:20%">
+            </colgroup>
+            <thead><tr>
+              <th>品名</th><th class="num">數量</th><th class="num">單位</th><th class="num">單價</th><th class="num">金額</th>
+            </tr></thead>
+            <tbody>
+              ${(o.items || []).map(item => `<tr>
+                <td>${item.name || '—'}</td>
+                <td class="num">${item.qty || '—'}</td>
+                <td class="num c-muted">${item.unit || '—'}</td>
+                <td class="num">${item.unitPrice > 0 ? item.unitPrice.toLocaleString() : '—'}</td>
+                <td class="num c-warn">${item.total > 0 ? 'NT$' + item.total.toLocaleString() : '—'}</td>
+              </tr>`).join('')}
+            </tbody>
+          </table>
+          <div class="summary-row">
+            <div class="sr-item"><span class="sr-label">PO 金額</span><span class="sr-value c-warn">NT$${o.total.toLocaleString()}</span></div>
+            <div class="sr-item"><span class="sr-label">品項數</span><span class="sr-value">${o.items.length} 項</span></div>
+          </div>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+
 
 function normalizeItemName(name) {
   return String(name || '')
@@ -1224,7 +1305,7 @@ function switchTab(tab, btn) {
   currentTab = tab;
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
-  ['urgent','main-pending','main-done','wh-pending','wh-done','missing-po','invoice-match'].forEach(id => {
+  ['urgent','main-pending','main-done','wh-pending','wh-done','missing-po','missing-master','invoice-match'].forEach(id => {
     document.getElementById('tab-' + id).style.display = tab === id ? 'block' : 'none';
   });
   updateSummaryForTab(tab);
