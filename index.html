@@ -1154,23 +1154,40 @@ function isAllDeliveredInMaster(po) {
   return rows.length > 0 && rows.every(row => row.isDelivered);
 }
 
+function getPOOverallMasterStatus(rows) {
+  if(!rows || !rows.length) return '—';
+
+  const activeRows = rows.filter(row => !row.isReturn);
+  if(activeRows.length && activeRows.every(row => row.isDelivered)) return '✓ 已交';
+
+  if(rows.some(row => row.isUrgent)) return '急件';
+  if(rows.some(row => !row.isDelivered && !row.isReturn)) return '未交';
+  if(rows.some(row => row.isReturn)) return '退貨';
+
+  return '—';
+}
+
 function getMasterStatusForPOItem(po, itemName) {
   const rows = getMasterItemsByPO(po);
   if(!rows.length) return '—';
 
   const itemKey = normalizeItemName(itemName);
-  let matched = [];
 
   if(itemKey) {
-    matched = rows.filter(row => {
+    const matched = rows.filter(row => {
       const masterName = normalizeItemName(row.name);
       return masterName === itemKey || masterName.includes(itemKey) || itemKey.includes(masterName);
     });
+
+    if(matched.length) {
+      const statuses = [...new Set(matched.map(row => row.displayStatus || row.delivered || '未交').filter(Boolean))];
+      return statuses.length ? statuses.join('、') : '—';
+    }
   }
 
-  const targetRows = matched.length ? matched : rows;
-  const statuses = [...new Set(targetRows.map(row => row.displayStatus || row.delivered || '未交').filter(Boolean))];
-  return statuses.length ? statuses.join('、') : '—';
+  // 品名對不到時，不再把同一張 PO 的所有品項狀態合併顯示；
+  // 改用訂單總表中該 PO 的單一整體狀態，避免出現「未交、已交、退貨」混在一起。
+  return getPOOverallMasterStatus(rows);
 }
 
 function masterStatusClass(statusText) {
@@ -1222,6 +1239,8 @@ function renderInvoiceMatch(list, targetId, prefix) {
       <div class="sr-item"><span class="sr-label">差額總計</span><span class="sr-value ${totalDiffAmount === 0 ? 'c-green' : 'c-warn'}">${moneyText(totalDiffAmount)}</span></div>
     </div>
   ` + list.map((o, idx) => {
+    const masterItems = sortedItems(getMasterItemsByPO(o.po));
+    const masterTotal = masterItems.reduce((s, item) => s + (item.total || 0), 0);
     const allDeliveredNoInvoice = !o.hasInvoice && o.allDelivered;
     const cardClass = allDeliveredNoInvoice
       ? 'po-card invoice-ready-card'
@@ -1244,6 +1263,7 @@ function renderInvoiceMatch(list, targetId, prefix) {
       : allDeliveredNoInvoice
         ? '總表/倉庫品項已全部已交，但尚未開發票'
         : '尚未在發票檔找到對應 PO';
+    const detailCountText = masterItems.length ? `${masterItems.length} 項總表明細` : '總表無此 PO';
 
     return `<div class="${cardClass}">
       <div class="po-header" onclick="toggle('${prefix}d${idx}','${prefix}ch${idx}')">
@@ -1253,38 +1273,45 @@ function renderInvoiceMatch(list, targetId, prefix) {
         </div>
         <div class="po-right">
           <div class="po-amount">PO NT$${o.poTotal.toLocaleString()}</div>
-          <div class="po-amount-sub">${o.items.length} 項</div>
+          <div class="po-amount-sub">${detailCountText}</div>
         </div>
         <span class="${chipClass}">${chipText}</span>
         <i class="ti ti-chevron-down chevron" id="${prefix}ch${idx}" aria-hidden="true"></i>
       </div>
       <div class="detail" id="${prefix}d${idx}">
         <div class="detail-inner">
-          <div class="dtitle">PO 品項與發票匹配</div>
+          <div class="dtitle">訂單總表交貨明細（依 PO 號匹配）</div>
+          ${!masterItems.length ? `
+            <div class="empty-state" style="padding:1.2rem;"><i class="ti ti-table-off" aria-hidden="true"></i>訂單總表／倉庫找不到此 PO</div>
+          ` : `
           <table class="dtbl">
             <colgroup>
-              <col style="width:30%"><col style="width:10%"><col style="width:12%"><col style="width:14%"><col style="width:14%"><col style="width:20%">
+              <col style="width:24%"><col style="width:20%"><col style="width:8%"><col style="width:7%"><col style="width:10%"><col style="width:12%"><col style="width:9%"><col style="width:10%">
             </colgroup>
             <thead><tr>
-              <th>品名</th><th class="num">數量</th><th class="num">單價</th><th class="num">PO金額</th><th style="text-align:center;">已交狀態</th><th style="text-align:center;">狀態</th>
+              <th>品名</th><th>規格</th><th class="num">數量</th><th class="num">單位</th><th class="num">單價</th><th class="num">總表金額</th><th style="text-align:center;">已交狀態</th><th style="text-align:center;">發票狀態</th>
             </tr></thead>
             <tbody>
-              ${o.items.map(item => {
-                const masterStatus = getMasterStatusForPOItem(o.po, item.name);
-                const masterStatusCls = masterStatusClass(masterStatus);
+              ${masterItems.map(item => {
+                const deliveryStatus = item.displayStatus || (item.isDelivered ? '✓ 已交' : item.isReturn ? item.delivered || '退貨' : '未交');
+                const deliveryClass = masterStatusClass(deliveryStatus);
                 return `<tr>
                 <td>${item.name || '—'}</td>
+                <td class="c-muted" style="font-size:11px;">${item.spec || '—'}</td>
                 <td class="num">${item.qty || '—'}</td>
+                <td class="num c-muted">${item.unit || '—'}</td>
                 <td class="num">${item.unitPrice > 0 ? item.unitPrice.toLocaleString() : '—'}</td>
                 <td class="num">${item.total > 0 ? 'NT$' + item.total.toLocaleString() : '—'}</td>
-                <td style="text-align:center;"><span class="${masterStatusCls}">${masterStatus}</span></td>
+                <td style="text-align:center;"><span class="${deliveryClass}">${deliveryStatus}</span></td>
                 <td style="text-align:center;"><span class="${chipClass}">${chipText}</span></td>
               </tr>`;
               }).join('')}
             </tbody>
           </table>
+          `}
           <div class="summary-row">
-            <div class="sr-item"><span class="sr-label">PO 金額</span><span class="sr-value">NT$${o.poTotal.toLocaleString()}</span></div>
+            <div class="sr-item"><span class="sr-label">PO 檔金額</span><span class="sr-value">NT$${o.poTotal.toLocaleString()}</span></div>
+            <div class="sr-item"><span class="sr-label">總表金額</span><span class="sr-value">NT$${masterTotal.toLocaleString()}</span></div>
             <div class="sr-item"><span class="sr-label">發票金額</span><span class="sr-value ${!o.hasInvoice ? 'c-red' : (o.isAmountMatched ? 'c-green' : 'c-warn')}">${o.hasInvoice ? 'NT$' + o.invoiceAmount.toLocaleString() : '未開立'}</span></div>
             <div class="sr-item"><span class="sr-label">差額</span><span class="sr-value ${o.diff === 0 ? 'c-green' : (o.hasInvoice ? 'c-warn' : 'c-red')}">NT$${o.diff.toLocaleString()}</span></div>
             ${o.hasInvoice ? `<div class="sr-item"><span class="sr-label">發票筆數</span><span class="sr-value">${o.invoiceCount}</span></div>` : `<div class="sr-item"><span class="sr-label">狀態</span><span class="sr-value ${allDeliveredNoInvoice ? 'c-warn' : 'c-red'}">${allDeliveredNoInvoice ? '已交未開票' : '未開發票'}</span></div>`}
@@ -1294,7 +1321,6 @@ function renderInvoiceMatch(list, targetId, prefix) {
     </div>`;
   }).join('');
 }
-
 
 function toggle(detailId, chevronId) {
   document.getElementById(detailId)?.classList.toggle('open');
