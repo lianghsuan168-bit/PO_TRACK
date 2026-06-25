@@ -228,7 +228,7 @@ const DEFAULT_MASTER_FILE = './data/master.xlsx';
 const DEFAULT_PO_FILE = './data/po.xlsx';
 const DEFAULT_INVOICE_FILE = './data/invoice.xlsx';
 // 填入你部署後的 Google Apps Script Web App URL，主頁會自動讀取 Google Sheet 發票資料。
-const GOOGLE_APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzlCppK5iNcKuXdDVmUT6xZWhRoi7RjwRnu-wGEd0qtgYxBgaMn6gShunwqVVDs4ZYo6Q/exec';
+const GOOGLE_APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwqSMbvovxMhKISq8Tf6tk9RYw7_kJrBbiQv0i1_uTt5OeB4aHpFuB0lWJO9T3KoEyYFg/exec';
 
 function loadMasterWorkbook(arrayBuffer, fileName, isDefault=false) {
   const wb = XLSX.read(arrayBuffer, {type:'array', cellDates:true});
