@@ -105,6 +105,12 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Helvetica Neue',Ar
 .chip-invoice-ready{background:#FFE8A3;color:#8A5A00;font-weight:700;}
 .c-warn{color:#9A5B00;font-weight:500;}
  
+
+.quick-actions{display:flex;gap:8px;flex-wrap:wrap;margin:.85rem 0 1.15rem;}
+.action-link{display:inline-flex;align-items:center;gap:6px;border:1px solid #d7e6f7;background:#f5f9ff;color:#185FA5;border-radius:10px;padding:7px 12px;font-size:13px;text-decoration:none;transition:background .15s,border-color .15s;}
+.action-link:hover{background:#E6F1FB;border-color:#B5D4F4;}
+.action-link.warn{border-color:#f1d28b;background:#fff8e1;color:#8a5a00;}
+
 @media(max-width:600px){
   .upload-area{grid-template-columns:1fr;}
   .summary-bar{grid-template-columns:1fr 1fr;}
@@ -119,6 +125,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Helvetica Neue',Ar
     <p>預設從 data/訂單總表.xlsx 載入；需要更新時再上傳新檔</p>
   </div>
  
+  <div class="quick-actions">
+    <a class="action-link warn" href="invoice_entry_gsheet.html" target="_blank" rel="noopener"><i class="ti ti-edit" aria-hidden="true"></i>開啟發票登打頁</a>
+    <a class="action-link" href="https://docs.google.com/spreadsheets/" target="_blank" rel="noopener"><i class="ti ti-brand-google" aria-hidden="true"></i>開啟 Google Sheets</a>
+  </div>
+
   <div class="upload-area">
     <div class="upload-box" id="box-master">
       <input type="file" accept=".xlsx,.xls,.csv" id="file-master" onchange="handleMaster(this)">
@@ -135,7 +146,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Helvetica Neue',Ar
     <div class="upload-box" id="box-invoice">
       <input type="file" accept=".xlsx,.xls,.csv" id="file-invoice" onchange="handleInvoice(this)">
       <div class="upload-label"><i class="ti ti-receipt" aria-hidden="true"></i>發票檔</div>
-      <div class="upload-hint">預設讀取 data/invoice.xlsx；更新時可上傳新版發票檔覆蓋</div>
+      <div class="upload-hint">優先讀取 Google Sheets；也可上傳 Excel/CSV 暫時覆蓋</div>
       <div class="upload-status" id="status-invoice"><i class="ti ti-check" aria-hidden="true"></i> <span id="fname-invoice"></span></div>
     </div>
   </div>
@@ -216,6 +227,8 @@ let currentTab = 'urgent';
 const DEFAULT_MASTER_FILE = './data/master.xlsx';
 const DEFAULT_PO_FILE = './data/po.xlsx';
 const DEFAULT_INVOICE_FILE = './data/invoice.xlsx';
+// 填入你部署後的 Google Apps Script Web App URL，主頁會自動讀取 Google Sheet 發票資料。
+const GOOGLE_APPS_SCRIPT_URL = 'PASTE_YOUR_APPS_SCRIPT_WEB_APP_URL_HERE';
 
 function loadMasterWorkbook(arrayBuffer, fileName, isDefault=false) {
   const wb = XLSX.read(arrayBuffer, {type:'array', cellDates:true});
@@ -294,7 +307,66 @@ function loadInvoiceWorkbook(arrayBuffer, fileName, isDefault=false) {
   tryProcess();
 }
 
+
+function isConfiguredGoogleAppsScriptUrl() {
+  return GOOGLE_APPS_SCRIPT_URL && !GOOGLE_APPS_SCRIPT_URL.includes('PASTE_YOUR_APPS_SCRIPT_WEB_APP_URL_HERE');
+}
+
+function loadInvoiceFromGoogleSheet() {
+  return new Promise((resolve, reject) => {
+    const callbackName = 'invoiceSheetCallback_' + Date.now() + '_' + Math.floor(Math.random() * 100000);
+    const script = document.createElement('script');
+    const sep = GOOGLE_APPS_SCRIPT_URL.includes('?') ? '&' : '?';
+    script.src = GOOGLE_APPS_SCRIPT_URL + sep + 'action=list&callback=' + encodeURIComponent(callbackName) + '&t=' + Date.now();
+    script.async = true;
+
+    const cleanup = () => {
+      delete window[callbackName];
+      script.remove();
+    };
+
+    window[callbackName] = payload => {
+      try {
+        if(!payload || payload.ok === false) throw new Error(payload && payload.error ? payload.error : 'Google Sheet 發票資料讀取失敗');
+        const rows = Array.isArray(payload.rows) ? payload.rows : [];
+        invoiceData = rows.map(row => ({
+          po: String(row.po || row.PO || '').trim(),
+          amount: Number(String(row.amount || row.金額 || 0).replace(/,/g,'')) || 0,
+          invoiceNo: String(row.invoiceNo || row.invoice_no || row.發票號碼 || '').trim(),
+          invoiceDate: String(row.invoiceDate || row.date || row.發票日期 || '').trim()
+        })).filter(row => row.po);
+
+        document.getElementById('fname-invoice').textContent = `Google Sheets 已載入 ${invoiceData.length} 筆`;
+        document.getElementById('status-invoice').classList.add('show');
+        document.getElementById('box-invoice').classList.add('loaded');
+        cleanup();
+        resolve();
+      } catch(err) {
+        cleanup();
+        reject(err);
+      }
+    };
+
+    script.onerror = () => {
+      cleanup();
+      reject(new Error('Google Apps Script 無法連線'));
+    };
+
+    document.head.appendChild(script);
+  });
+}
+
 async function loadDefaultInvoice() {
+  if(isConfiguredGoogleAppsScriptUrl()) {
+    try {
+      await loadInvoiceFromGoogleSheet();
+      tryProcess();
+      return;
+    } catch(err) {
+      console.warn('Google Sheets 發票資料載入失敗，改用本機 invoice.xlsx', err);
+    }
+  }
+
   try {
     const buffer = await fetchArrayBuffer(DEFAULT_INVOICE_FILE);
     loadInvoiceWorkbook(buffer, DEFAULT_INVOICE_FILE, true);
