@@ -56,10 +56,10 @@
 </div>
 <iframe name="saveFrame" class="hidden-frame"></iframe>
 <script>
-const GOOGLE_APPS_SCRIPT_URL = 'PASTE_YOUR_APPS_SCRIPT_WEB_APP_URL_HERE';
+const GOOGLE_APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzlCppK5iNcKuXdDVmUT6xZWhRoi7RjwRnu-wGEd0qtgYxBgaMn6gShunwqVVDs4ZYo6Q/exec';
 const DEFAULT_PO_FILE = './data/po.xlsx';
 let poRows = [];
-function configured(){return GOOGLE_APPS_SCRIPT_URL && !GOOGLE_APPS_SCRIPT_URL.includes('PASTE_YOUR_APPS_SCRIPT_WEB_APP_URL_HERE')}
+function configured(){return GOOGLE_APPS_SCRIPT_URL && !GOOGLE_APPS_SCRIPT_URL.includes('https://script.google.com/macros/s/AKfycbzlCppK5iNcKuXdDVmUT6xZWhRoi7RjwRnu-wGEd0qtgYxBgaMn6gShunwqVVDs4ZYo6Q/exec')}
 function setToday(){document.getElementById('invoiceDate').value = new Date().toISOString().slice(0,10)}
 setToday();
 function showTab(id,btn){document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));btn.classList.add('active');document.querySelectorAll('.panel').forEach(x=>x.classList.remove('active'));document.getElementById('panel-'+id).classList.add('active');}
