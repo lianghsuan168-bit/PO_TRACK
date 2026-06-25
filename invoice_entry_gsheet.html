@@ -25,7 +25,42 @@ function cardHtml(o){let cls=o.isAmountMatched?'ok':(!o.hasInvoice?(o.allDeliver
 function openManual(){openInvoice('')}
 function openInvoice(po){const o=combined.find(x=>normalizePO(x.po)===normalizePO(po))||{po:po,total:0,masterItems:[],invoiceRows:[],invoiceNos:[]};document.getElementById('modalTitle').textContent=o.hasInvoice?'修改/補登發票':'登打發票';document.getElementById('modalSubtitle').textContent=o.po||'手動新增';document.getElementById('infoPO').textContent=o.po||'—';document.getElementById('infoAmount').textContent=money(o.total||0);document.getElementById('infoSupplier').textContent=(o.masterItems&&o.masterItems[0]&&o.masterItems[0].supplier)||'—';document.getElementById('infoDelivery').textContent=o.allDelivered?'總表全數已交':'尚未全交或無總表資料';document.getElementById('formPO').value=o.po||'';document.getElementById('formInvoiceNo').value=(o.invoiceNos&&o.invoiceNos[0])||'';document.getElementById('formAmount').value=Math.round((o.invoiceAmount||o.total||0));document.getElementById('formDate').value=today();document.getElementById('formNote').value='';document.getElementById('formStatus').textContent='尚未儲存';document.getElementById('modalBackdrop').classList.add('show');setTimeout(()=>document.getElementById('formInvoiceNo').focus(),50)}
 function closeModal(){document.getElementById('modalBackdrop').classList.remove('show')}
-document.getElementById('invoiceForm').addEventListener('submit',e=>{if(!configured()){e.preventDefault();document.getElementById('formStatus').textContent='請先設定 GOOGLE_APPS_SCRIPT_URL';return}e.currentTarget.action=GOOGLE_APPS_SCRIPT_URL;document.getElementById('formStatus').textContent='正在儲存...';setTimeout(async()=>{toast('已送出，正在同步資料');closeModal();await loadInvoices();combineData();renderList();},1500);});
+document.getElementById('invoiceForm').addEventListener('submit', e => {
+  e.preventDefault();
+
+  if (!configured()) {
+    document.getElementById('formStatus').textContent = '請先設定 GOOGLE_APPS_SCRIPT_URL';
+    return;
+  }
+
+  const fd = new FormData(e.currentTarget);
+  const cb = 'saveCb_' + Date.now();
+
+  window[cb] = async res => {
+    delete window[cb];
+
+    if (!res || !res.ok) {
+      document.getElementById('formStatus').textContent = '儲存失敗';
+      return;
+    }
+
+    toast('已儲存');
+    closeModal();
+    await loadInvoices();
+    combineData();
+    renderList();
+  };
+
+  const params = new URLSearchParams(fd);
+  params.set('callback', cb);
+
+  const s = document.createElement('script');
+  s.src = GOOGLE_APPS_SCRIPT_URL + '?' + params.toString();
+  document.body.appendChild(s);
+
+  document.getElementById('formStatus').textContent = '正在儲存...';
+  setTimeout(() => s.remove(), 6000);
+});
 async function reloadAll(){document.getElementById('list').innerHTML='<div class="empty"><i class="ti ti-loader-2"></i>正在載入...</div>';await Promise.all([loadMaster(),loadPO(),loadInvoices()]);combineData();renderList()}
 reloadAll();
 </script></body></html>
