@@ -228,7 +228,7 @@ const DEFAULT_MASTER_FILE = './data/master.xlsx';
 const DEFAULT_PO_FILE = './data/po.xlsx';
 const DEFAULT_INVOICE_FILE = './data/invoice.xlsx';
 // 填入你部署後的 Google Apps Script Web App URL，主頁會自動讀取 Google Sheet 發票資料。
-const GOOGLE_APPS_SCRIPT_URL = 'PASTE_YOUR_APPS_SCRIPT_WEB_APP_URL_HERE';
+const GOOGLE_APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzlCppK5iNcKuXdDVmUT6xZWhRoi7RjwRnu-wGEd0qtgYxBgaMn6gShunwqVVDs4ZYo6Q/exec';
 
 function loadMasterWorkbook(arrayBuffer, fileName, isDefault=false) {
   const wb = XLSX.read(arrayBuffer, {type:'array', cellDates:true});
@@ -309,7 +309,7 @@ function loadInvoiceWorkbook(arrayBuffer, fileName, isDefault=false) {
 
 
 function isConfiguredGoogleAppsScriptUrl() {
-  return GOOGLE_APPS_SCRIPT_URL && !GOOGLE_APPS_SCRIPT_URL.includes('PASTE_YOUR_APPS_SCRIPT_WEB_APP_URL_HERE');
+  return GOOGLE_APPS_SCRIPT_URL && !GOOGLE_APPS_SCRIPT_URL.includes('https://script.google.com/macros/s/AKfycbzlCppK5iNcKuXdDVmUT6xZWhRoi7RjwRnu-wGEd0qtgYxBgaMn6gShunwqVVDs4ZYo6Q/exec');
 }
 
 function loadInvoiceFromGoogleSheet() {
