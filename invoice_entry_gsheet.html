@@ -18,9 +18,11 @@ function parsePO(rows){let hi=0;for(let i=0;i<Math.min(10,rows.length);i++){cons
 function loadInvoices() {
   return new Promise(resolve => {
 
-    const statusBox = document.getElementById('setupBox');
-    statusBox.style.display = 'block';
-    statusBox.textContent = '正在連線 Google Sheet...';
+    if (!configured()) {
+      invoices = [];
+      resolve();
+      return;
+    }
 
     const cb =
       'invoiceCb_' +
@@ -28,181 +30,139 @@ function loadInvoices() {
       '_' +
       Math.random().toString(36).slice(2);
 
-    const s = document.createElement('script');
+    const script = document.createElement('script');
 
-    let done = false;
+    let finished = false;
 
-    window[cb] = function(data) {
+    const timer = setTimeout(() => {
+      if (finished) return;
 
-      console.log('✅ Apps Script 回傳：', data);
+      finished = true;
 
-      if (Array.isArray(data)) {
-        invoices = data;
-      } else if (data && Array.isArray(data.rows)) {
-        invoices = data.rows;
-      } else {
-        invoices = [];
-      }
-
-      // 強制標準化
-      invoices = invoices.map(x => ({
-        ...x,
-        po: String(x.po || '').trim(),
-        invoiceNo: String(x.invoiceNo || '').trim(),
-        amount:
-          Number(
-            String(x.amount || 0)
-              .replace(/,/g, '')
-          ) || 0
-      }));
-
-      console.log(
-        '✅ 發票載入完成：',
-        invoices.length,
-        invoices
-      );
-
-      statusBox.style.display = 'block';
-      statusBox.style.background = '#EAF3DE';
-      statusBox.style.borderColor = '#B7D99A';
-      statusBox.style.color = '#3B6D11';
-
-      statusBox.textContent =
-        'Google Sheet 同步成功：已讀取 ' +
-        invoices.length +
-        ' 筆發票';
-
-      done = true;
-
-      delete window[cb];
-
-      if (s.parentNode) {
-        s.remove();
-      }
-
-      resolve();
-    };
-
-    s.onerror = function(err) {
-
-      console.error(
-        '❌ Apps Script JSONP 載入失敗',
-        err
-      );
+      console.warn('Google Sheet 發票載入逾時');
 
       invoices = [];
 
-      statusBox.style.display = 'block';
-      statusBox.style.background = '#FCEBEB';
-      statusBox.style.color = '#A32D2D';
-
-      statusBox.textContent =
-        'Google Sheet 載入失敗，請按 F12 查看 Console';
-
-      done = true;
-
-      delete window[cb];
-
-      resolve();
-    };
-
-    const url =
-      GOOGLE_APPS_SCRIPT_URL +
-      '?action=list' +
-      '&callback=' +
-      encodeURIComponent(cb) +
-      '&t=' +
-      Date.now();
-
-    console.log(
-      '正在讀取：',
-      url
-    );
-
-    s.src = url;
-
-    document.body.appendChild(s);
-
-    setTimeout(() => {
-
-      if (!done) {
-
-        console.error(
-          '❌ Google Sheet 載入超過 20 秒'
-        );
-
-        invoices = [];
-
-        statusBox.style.display = 'block';
-        statusBox.style.background = '#FCEBEB';
-        statusBox.style.color = '#A32D2D';
-
-        statusBox.textContent =
-          'Google Sheet 連線逾時';
-
+      try {
         delete window[cb];
+      } catch (e) {}
 
-        if (s.parentNode) {
-          s.remove();
-        }
-
-        resolve();
+      if (script.parentNode) {
+        script.remove();
       }
 
-    }, 20000);
+      // ★ 就算 Google Sheet 失敗，也一定放行
+      resolve();
 
-  });
-}
+    }, 8000);
+
+
+    window[cb] = function(data) {
+
+      if (finished) return;
+
+      finished = true;
+      clearTimeout(timer);
+
+      try {
+
+        const rows = Array.isArray(data)
+          ? data
+          : (
+              data &&
+              Array.isArray(data.rows)
+                ? data.rows
+                : []
+            );
+
+        invoices = rows.map(x => ({
+          createdAt: x.createdAt || '',
+
+          po:
+            String(x.po ?? '')
+              .trim(),
+
+          invoiceNo:
+            String(x.invoiceNo ?? '')
+              .trim(),
+
+          amount:
+            Number(
+              String(x.amount ?? 0)
+                .replace(/,/g, '')
+            ) || 0,
+
+          invoiceDate:
+            x.invoiceDate || '',
+
+          note:
+            String(x.note ?? '')
+        }));
+
+        console.log(
+          'Google Sheet 發票載入成功：',
+          invoices.length,
+          invoices
+        );
+
       } catch (err) {
 
         console.error(
-          '處理 Google Sheet 發票資料失敗：',
+          '發票資料處理失敗：',
           err
         );
 
         invoices = [];
       }
 
-      finish();
+      try {
+        delete window[cb];
+      } catch (e) {}
+
+      if (script.parentNode) {
+        script.remove();
+      }
+
+      resolve();
     };
+
 
     script.onerror = function(err) {
 
+      if (finished) return;
+
+      finished = true;
+      clearTimeout(timer);
+
       console.error(
-        'Google Apps Script 載入失敗',
+        'Google Sheet JSONP 載入失敗：',
         err
       );
 
       invoices = [];
 
-      finish();
+      try {
+        delete window[cb];
+      } catch (e) {}
+
+      if (script.parentNode) {
+        script.remove();
+      }
+
+      // ★ 發票失敗不能拖垮整個系統
+      resolve();
     };
+
 
     script.src =
       GOOGLE_APPS_SCRIPT_URL +
       '?action=list' +
       '&callback=' +
       encodeURIComponent(cb) +
-      '&t=' +
+      '&_=' +
       Date.now();
 
-    document.body.appendChild(script);
-
-    // 15 秒 timeout
-    setTimeout(() => {
-
-      if (!finished) {
-
-        console.error(
-          'Google Sheet 發票資料載入逾時'
-        );
-
-        invoices = [];
-
-        finish();
-      }
-
-    }, 15000);
+    document.head.appendChild(script);
 
   });
 }
@@ -253,44 +213,87 @@ document.getElementById('invoiceForm').addEventListener('submit', e => {
 });
 async function reloadAll() {
 
-  document.getElementById('list').innerHTML =
+  const listEl =
+    document.getElementById('list');
+
+  listEl.innerHTML =
     '<div class="empty">' +
-    '<i class="ti ti-loader-2"></i>' +
-    '正在載入...' +
+      '<i class="ti ti-loader-2"></i>' +
+      '正在載入 PO 與訂單總表...' +
     '</div>';
 
   try {
+
+    // =====================================
+    // 第一階段
+    // 先載入 Excel
+    // 不等 Google Sheet
+    // =====================================
 
     await Promise.all([
       loadMaster(),
       loadPO()
     ]);
 
-    // 發票單獨等待，方便除錯
-    await loadInvoices();
+    console.log(
+      'PO 載入：',
+      poRows.length
+    );
 
     console.log(
-      '目前發票資料：',
-      invoices
+      '總表載入：',
+      masterRows.length
     );
+
+
+    // 先用沒有發票的狀態畫一次
+    invoices = [];
 
     combineData();
-
-    console.log(
-      '合併後資料：',
-      combined
-    );
-
     renderList();
+
+
+    // =====================================
+    // 第二階段
+    // 再背景抓 Google Sheet
+    // =====================================
+
+    try {
+
+      await loadInvoices();
+
+      console.log(
+        '發票載入：',
+        invoices.length
+      );
+
+      combineData();
+      renderList();
+
+    } catch (invoiceErr) {
+
+      console.error(
+        '發票同步失敗，但 PO 畫面繼續使用：',
+        invoiceErr
+      );
+
+    }
 
   } catch (err) {
 
     console.error(
-      '重新整理資料失敗：',
+      'Excel 載入失敗：',
       err
     );
 
+    listEl.innerHTML =
+      '<div class="empty">' +
+        '<i class="ti ti-alert-circle"></i>' +
+        'PO 或訂單總表載入失敗' +
+      '</div>';
+
   }
+
 }
 reloadAll();
 </script></body></html>
