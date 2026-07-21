@@ -15,7 +15,149 @@ async function loadPO(){try{const b=await fetchArrayBuffer(DEFAULT_PO_FILE);cons
 function findHeaderRow(rows){for(let i=0;i<Math.min(8,rows.length);i++){const row=(rows[i]||[]).map(c=>String(c).trim());if(row.some(c=>c==='PO'||c==='料號名稱'||c==='已交'))return i;}return 1}
 function parseMaster(rows,source){const hi=findHeaderRow(rows);const headers=(rows[hi]||[]).map(c=>String(c).replace(/[\n\r]/g,' ').trim());const idx=h=>headers.indexOf(h);const out=[];for(let i=hi+1;i<rows.length;i++){const r=rows[i];if(!r||r.every(c=>c===''||c==null))continue;const po=String(r[idx('PO')]||'').trim();const delivered=String(r[idx('已交')]||'').trim();const low=delivered.toLowerCase();const name=String(r[idx('料號名稱')]||'').trim();if(!name)continue;if(po.toLowerCase()==='x'||low==='x')continue;const isDelivered=low==='v';const isReturn=delivered.includes('退');out.push({source,po,name,spec:String(r[idx('規格型號')]||'').trim(),qty:Number(r[idx('數量')])||0,unit:String(r[idx('單位')]||'').trim(),unitPrice:Number(r[idx('單價')])||0,total:Number(r[idx('合計')])||0,supplier:String(r[idx('供應商')]||'').trim(),project:String(r[idx('專案')]||'').trim(),delivered,displayStatus:isDelivered?'✓ 已交':isReturn?delivered:(delivered||'未交'),isDelivered,isReturn});}return out}
 function parsePO(rows){let hi=0;for(let i=0;i<Math.min(10,rows.length);i++){const cells=(rows[i]||[]).map(c=>String(c).toLowerCase());if(cells.some(c=>c.includes('po')||c.includes('order')||c.includes('採購單')||c.includes('訂單'))){hi=i;break}}const headers=(rows[hi]||[]).map(c=>String(c).replace(/[\n\r]/g,' ').trim().toLowerCase());const findIdx=keys=>{for(const k of keys){const kk=String(k).toLowerCase();let idx=headers.indexOf(kk);if(idx>=0)return idx;idx=headers.findIndex(h=>h.includes(kk));if(idx>=0)return idx}return -1};const poIdx=findIdx(['po','po no','order_no','order no','order','訂單','採購單']);const nameIdx=findIdx(['料號名稱','品名','item','description','product','品項','名稱']);const totalIdx=findIdx(['合計','總價','總金額','amount','total']);const map=new Map();for(let i=hi+1;i<rows.length;i++){const r=rows[i];if(!r||r.every(c=>c===''||c==null))continue;const po=String((poIdx>=0?r[poIdx]:r[0])||'').trim();if(!po)continue;const key=normalizePO(po);if(!map.has(key))map.set(key,{po,items:0,total:0,names:[]});const o=map.get(key);o.items++;o.total+=Number(String((totalIdx>=0?r[totalIdx]:0)||'').replace(/,/g,''))||0;const name=String((nameIdx>=0?r[nameIdx]:'')||'').trim();if(name&&o.names.length<3)o.names.push(name)}return [...map.values()]}
-function loadInvoices(){return new Promise(resolve=>{if(!configured()){document.getElementById('setupBox').style.display='block';invoices=[];resolve();return}const cb='invoiceCb_'+Date.now();window[cb]=data=>{invoices=Array.isArray(data)?data:(data.rows||[]);delete window[cb];resolve();};const s=document.createElement('script');s.src=GOOGLE_APPS_SCRIPT_URL+(GOOGLE_APPS_SCRIPT_URL.includes('?')?'&':'?')+'action=list&callback='+encodeURIComponent(cb)+'&t='+Date.now();s.onerror=()=>{invoices=[];resolve();};document.body.appendChild(s);setTimeout(()=>s.remove(),6000);})}
+function loadInvoices() {
+  return new Promise(resolve => {
+
+    if (!configured()) {
+      document.getElementById('setupBox').style.display = 'block';
+      invoices = [];
+      resolve();
+      return;
+    }
+
+    const cb = 'invoiceCb_' + Date.now() + '_' +
+      Math.random().toString(36).slice(2);
+
+    const script = document.createElement('script');
+
+    let finished = false;
+
+    function cleanup() {
+      if (script.parentNode) {
+        script.parentNode.removeChild(script);
+      }
+
+      try {
+        delete window[cb];
+      } catch (e) {
+        window[cb] = undefined;
+      }
+    }
+
+    function finish() {
+      if (finished) return;
+
+      finished = true;
+      cleanup();
+      resolve();
+    }
+
+    // Apps Script JSONP 成功時會呼叫這裡
+    window[cb] = function(data) {
+
+      console.log('Google Sheet 原始回傳：', data);
+
+      try {
+
+        // 同時支援：
+        // [...]
+        // 或
+        // { ok:true, rows:[...] }
+
+        let rows = [];
+
+        if (Array.isArray(data)) {
+          rows = data;
+        } else if (
+          data &&
+          Array.isArray(data.rows)
+        ) {
+          rows = data.rows;
+        }
+
+        invoices = rows.map(row => ({
+          createdAt: row.createdAt || '',
+
+          // PO 一律轉字串，避免 Google Sheet
+          // 把 20260306007 當數字
+          po: String(row.po || '').trim(),
+
+          invoiceNo:
+            String(row.invoiceNo || '').trim(),
+
+          amount:
+            Number(
+              String(row.amount || 0)
+                .replace(/,/g, '')
+            ) || 0,
+
+          invoiceDate:
+            row.invoiceDate || '',
+
+          note:
+            String(row.note || '')
+        }));
+
+        console.log(
+          '成功載入發票：',
+          invoices.length,
+          '筆',
+          invoices
+        );
+
+      } catch (err) {
+
+        console.error(
+          '處理 Google Sheet 發票資料失敗：',
+          err
+        );
+
+        invoices = [];
+      }
+
+      finish();
+    };
+
+    script.onerror = function(err) {
+
+      console.error(
+        'Google Apps Script 載入失敗',
+        err
+      );
+
+      invoices = [];
+
+      finish();
+    };
+
+    script.src =
+      GOOGLE_APPS_SCRIPT_URL +
+      '?action=list' +
+      '&callback=' +
+      encodeURIComponent(cb) +
+      '&t=' +
+      Date.now();
+
+    document.body.appendChild(script);
+
+    // 15 秒 timeout
+    setTimeout(() => {
+
+      if (!finished) {
+
+        console.error(
+          'Google Sheet 發票資料載入逾時'
+        );
+
+        invoices = [];
+
+        finish();
+      }
+
+    }, 15000);
+
+  });
+}
 function combineData(){const poMap=new Map();poRows.forEach(p=>{poMap.set(normalizePO(p.po),{po:p.po,poTotal:p.total||0,poItems:p.items||0,names:p.names||[]})});masterRows.forEach(r=>{const key=normalizePO(r.po);if(!key)return;if(!poMap.has(key))poMap.set(key,{po:r.po,poTotal:0,poItems:0,names:[]});const o=poMap.get(key);if(!o.masterItems)o.masterItems=[];o.masterItems.push(r);});const invMap=new Map();invoices.forEach(x=>{const key=normalizePO(x.po);if(!key)return;if(!invMap.has(key))invMap.set(key,{count:0,amount:0,invoiceNos:[],rows:[]});const m=invMap.get(key);m.count++;m.amount+=Number(String(x.amount||0).replace(/,/g,''))||0;if(x.invoiceNo)m.invoiceNos.push(x.invoiceNo);m.rows.push(x);});combined=[...poMap.values()].map(o=>{const inv=invMap.get(normalizePO(o.po));const masterTotal=(o.masterItems||[]).reduce((s,r)=>s+(r.total||0),0);const total=masterTotal||o.poTotal||0;const hasInvoice=!!inv;const allDelivered=(o.masterItems||[]).length>0 && (o.masterItems||[]).every(r=>r.isDelivered);const diff=(inv?inv.amount:0)-total;const matched=hasInvoice && Math.round(diff)===0;const status=hasInvoice?(matched?'金額一致':'金額不符'):(allDelivered?'已交未開票':'未開發票');return {...o,masterTotal,total,hasInvoice,invoiceAmount:inv?inv.amount:0,invoiceNos:inv?inv.invoiceNos:[],invoiceRows:inv?inv.rows:[],invoiceCount:inv?inv.count:0,allDelivered,diff,isAmountMatched:matched,status};}).sort((a,b)=>rank(a)-rank(b)||String(a.po).localeCompare(String(b.po)));}
 function rank(o){if(!o.hasInvoice&&o.allDelivered)return 0;if(!o.hasInvoice)return 1;if(!o.isAmountMatched)return 2;return 3}
 function renderSummary(){document.getElementById('mTotal').textContent=combined.length;document.getElementById('mMissing').textContent=combined.filter(x=>!x.hasInvoice).length;document.getElementById('mDone').textContent=combined.filter(x=>x.hasInvoice).length;document.getElementById('mAmount').textContent=money(combined.reduce((s,x)=>s+(x.invoiceAmount||0),0));}
@@ -61,6 +203,46 @@ document.getElementById('invoiceForm').addEventListener('submit', e => {
   document.getElementById('formStatus').textContent = '正在儲存...';
   setTimeout(() => s.remove(), 6000);
 });
-async function reloadAll(){document.getElementById('list').innerHTML='<div class="empty"><i class="ti ti-loader-2"></i>正在載入...</div>';await Promise.all([loadMaster(),loadPO(),loadInvoices()]);combineData();renderList()}
+async function reloadAll() {
+
+  document.getElementById('list').innerHTML =
+    '<div class="empty">' +
+    '<i class="ti ti-loader-2"></i>' +
+    '正在載入...' +
+    '</div>';
+
+  try {
+
+    await Promise.all([
+      loadMaster(),
+      loadPO()
+    ]);
+
+    // 發票單獨等待，方便除錯
+    await loadInvoices();
+
+    console.log(
+      '目前發票資料：',
+      invoices
+    );
+
+    combineData();
+
+    console.log(
+      '合併後資料：',
+      combined
+    );
+
+    renderList();
+
+  } catch (err) {
+
+    console.error(
+      '重新整理資料失敗：',
+      err
+    );
+
+  }
+}
 reloadAll();
 </script></body></html>
