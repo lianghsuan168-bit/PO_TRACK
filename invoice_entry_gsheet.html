@@ -18,93 +18,141 @@ function parsePO(rows){let hi=0;for(let i=0;i<Math.min(10,rows.length);i++){cons
 function loadInvoices() {
   return new Promise(resolve => {
 
-    if (!configured()) {
-      document.getElementById('setupBox').style.display = 'block';
-      invoices = [];
-      resolve();
-      return;
-    }
+    const statusBox = document.getElementById('setupBox');
+    statusBox.style.display = 'block';
+    statusBox.textContent = '正在連線 Google Sheet...';
 
-    const cb = 'invoiceCb_' + Date.now() + '_' +
+    const cb =
+      'invoiceCb_' +
+      Date.now() +
+      '_' +
       Math.random().toString(36).slice(2);
 
-    const script = document.createElement('script');
+    const s = document.createElement('script');
 
-    let finished = false;
+    let done = false;
 
-    function cleanup() {
-      if (script.parentNode) {
-        script.parentNode.removeChild(script);
-      }
-
-      try {
-        delete window[cb];
-      } catch (e) {
-        window[cb] = undefined;
-      }
-    }
-
-    function finish() {
-      if (finished) return;
-
-      finished = true;
-      cleanup();
-      resolve();
-    }
-
-    // Apps Script JSONP 成功時會呼叫這裡
     window[cb] = function(data) {
 
-      console.log('Google Sheet 原始回傳：', data);
+      console.log('✅ Apps Script 回傳：', data);
 
-      try {
+      if (Array.isArray(data)) {
+        invoices = data;
+      } else if (data && Array.isArray(data.rows)) {
+        invoices = data.rows;
+      } else {
+        invoices = [];
+      }
 
-        // 同時支援：
-        // [...]
-        // 或
-        // { ok:true, rows:[...] }
+      // 強制標準化
+      invoices = invoices.map(x => ({
+        ...x,
+        po: String(x.po || '').trim(),
+        invoiceNo: String(x.invoiceNo || '').trim(),
+        amount:
+          Number(
+            String(x.amount || 0)
+              .replace(/,/g, '')
+          ) || 0
+      }));
 
-        let rows = [];
+      console.log(
+        '✅ 發票載入完成：',
+        invoices.length,
+        invoices
+      );
 
-        if (Array.isArray(data)) {
-          rows = data;
-        } else if (
-          data &&
-          Array.isArray(data.rows)
-        ) {
-          rows = data.rows;
-        }
+      statusBox.style.display = 'block';
+      statusBox.style.background = '#EAF3DE';
+      statusBox.style.borderColor = '#B7D99A';
+      statusBox.style.color = '#3B6D11';
 
-        invoices = rows.map(row => ({
-          createdAt: row.createdAt || '',
+      statusBox.textContent =
+        'Google Sheet 同步成功：已讀取 ' +
+        invoices.length +
+        ' 筆發票';
 
-          // PO 一律轉字串，避免 Google Sheet
-          // 把 20260306007 當數字
-          po: String(row.po || '').trim(),
+      done = true;
 
-          invoiceNo:
-            String(row.invoiceNo || '').trim(),
+      delete window[cb];
 
-          amount:
-            Number(
-              String(row.amount || 0)
-                .replace(/,/g, '')
-            ) || 0,
+      if (s.parentNode) {
+        s.remove();
+      }
 
-          invoiceDate:
-            row.invoiceDate || '',
+      resolve();
+    };
 
-          note:
-            String(row.note || '')
-        }));
+    s.onerror = function(err) {
 
-        console.log(
-          '成功載入發票：',
-          invoices.length,
-          '筆',
-          invoices
+      console.error(
+        '❌ Apps Script JSONP 載入失敗',
+        err
+      );
+
+      invoices = [];
+
+      statusBox.style.display = 'block';
+      statusBox.style.background = '#FCEBEB';
+      statusBox.style.color = '#A32D2D';
+
+      statusBox.textContent =
+        'Google Sheet 載入失敗，請按 F12 查看 Console';
+
+      done = true;
+
+      delete window[cb];
+
+      resolve();
+    };
+
+    const url =
+      GOOGLE_APPS_SCRIPT_URL +
+      '?action=list' +
+      '&callback=' +
+      encodeURIComponent(cb) +
+      '&t=' +
+      Date.now();
+
+    console.log(
+      '正在讀取：',
+      url
+    );
+
+    s.src = url;
+
+    document.body.appendChild(s);
+
+    setTimeout(() => {
+
+      if (!done) {
+
+        console.error(
+          '❌ Google Sheet 載入超過 20 秒'
         );
 
+        invoices = [];
+
+        statusBox.style.display = 'block';
+        statusBox.style.background = '#FCEBEB';
+        statusBox.style.color = '#A32D2D';
+
+        statusBox.textContent =
+          'Google Sheet 連線逾時';
+
+        delete window[cb];
+
+        if (s.parentNode) {
+          s.remove();
+        }
+
+        resolve();
+      }
+
+    }, 20000);
+
+  });
+}
       } catch (err) {
 
         console.error(
